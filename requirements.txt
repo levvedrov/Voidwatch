@@ -1,0 +1,6 @@
+psutil
+rich
+requests
+fastapi
+uvicorn[standard]
+sqlalchemy
