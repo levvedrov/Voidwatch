@@ -188,7 +188,10 @@ class ProcessClassifier:
         X_ben = _benign_samples()
         X = np.vstack([X_mal, X_ben])
         y = np.array([1] * len(X_mal) + [0] * len(X_ben))
+        self.train_on(X, y)
 
+    def train_on(self, X: np.ndarray, y: np.ndarray) -> None:
+        """Fit on any externally supplied feature matrix and labels."""
         self.scaler = StandardScaler()
         X_s = self.scaler.fit_transform(X)
 

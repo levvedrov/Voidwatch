@@ -1,3 +1,6 @@
+# Training datasets (download separately)
+backend/datasets/
+
 # Python
 __pycache__/
 *.pyc
