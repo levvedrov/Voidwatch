@@ -8,15 +8,11 @@ async function get(path) {
 
 export const api = {
   base: BASE,
-
-  async ping() {
-    try { await fetch(BASE + '/agents'); return true } catch { return false }
-  },
-
-  alerts(params = {})  { return get('/alerts?' + new URLSearchParams(params)) },
+  async ping() { try { await fetch(BASE + '/agents'); return true } catch { return false } },
+  alerts(params = {})    { return get('/alerts?'  + new URLSearchParams(params)) },
   processes(params = {}) { return get('/processes?' + new URLSearchParams(params)) },
-  agents()             { return get('/agents') },
-  timeline(params = {}) { return get('/timeline?' + new URLSearchParams(params)) },
+  agents()               { return get('/agents') },
+  timeline(params = {})  { return get('/timeline?' + new URLSearchParams(params)) },
 }
 
 export const MITRE_NAMES = {
@@ -41,24 +37,50 @@ export const MITRE_NAMES = {
 }
 
 export function riskColor(level) {
-  return { LOW:'#22c55e', MEDIUM:'#eab308', HIGH:'#f97316', CRITICAL:'#ef4444', SEVERE:'#a855f7' }[level] ?? '#9ca3af'
+  return { LOW:'#22c55e', MEDIUM:'#eab308', HIGH:'#f97316', CRITICAL:'#ef4444', SEVERE:'#a855f7' }[level] ?? '#5a6478'
+}
+
+export function scoreColor(score) {
+  if (score >= 120) return '#a855f7'
+  if (score >= 80)  return '#ef4444'
+  if (score >= 50)  return '#f97316'
+  if (score >= 25)  return '#eab308'
+  return '#22c55e'
+}
+
+export function mlColor(pct) {
+  if (pct >= 80) return '#ef4444'
+  if (pct >= 60) return '#f97316'
+  if (pct >= 30) return '#eab308'
+  return '#22c55e'
+}
+
+// Force UTC interpretation for Python naive datetime strings (no timezone suffix)
+function toUTC(ts) {
+  const s = String(ts)
+  return new Date(s.endsWith('Z') || s.includes('+') ? s : s + 'Z')
+}
+
+export function parseUTC(ts) {
+  return ts ? toUTC(ts) : new Date(0)
+}
+
+export function ago(ts) {
+  if (!ts) return '—'
+  const diff = Math.floor((Date.now() - toUTC(ts)) / 1000)
+  if (diff < 5)    return 'just now'
+  if (diff < 60)   return `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  return `${Math.floor(diff / 3600)}h ago`
 }
 
 export function fmt(ts) {
   if (!ts) return '—'
-  const d = new Date(ts)
-  return d.toLocaleTimeString('en-GB', { hour12: false })
+  return toUTC(ts).toLocaleTimeString('en-GB', { hour12: false })
 }
 
 export function fmtDate(ts) {
   if (!ts) return '—'
-  const d = new Date(ts)
+  const d = toUTC(ts)
   return d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB', { hour12: false })
-}
-
-export function ago(ts) {
-  const s = Math.floor((Date.now() - new Date(ts)) / 1000)
-  if (s < 60) return `${s}s ago`
-  if (s < 3600) return `${Math.floor(s/60)}m ago`
-  return `${Math.floor(s/3600)}h ago`
 }

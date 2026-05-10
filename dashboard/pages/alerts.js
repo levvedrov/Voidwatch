@@ -5,31 +5,31 @@ export async function render(el, params = {}) {
 
   el.innerHTML = '<div class="loading">Loading alerts…</div>'
   try {
-    const agents  = await api.agents()
-    let alerts = await api.alerts({ limit: 500 })
+    const agents = await api.agents()
+    let alerts   = await api.alerts({ limit: 500 })
 
     el.innerHTML = `
       <div class="page-title">Alerts <span class="sub">${alerts.length} total</span></div>
 
       <div class="filters" id="alert-filters">
-        <span class="filter-label">Filter:</span>
-        <select id="f-level">
+        <input id="f-process" placeholder="Search process…" style="width:180px" />
+        <select id="f-level" style="width:130px">
           <option value="">All levels</option>
           <option>LOW</option><option>MEDIUM</option><option>HIGH</option>
           <option>CRITICAL</option><option>SEVERE</option>
         </select>
-        <select id="f-agent">
+        <select id="f-agent" style="width:150px">
           <option value="">All agents</option>
           ${agents.map(a => `<option value="${a.agent_id}">${a.hostname}</option>`).join('')}
         </select>
-        <input id="f-process" placeholder="Process name…" style="width:160px" />
-        <input id="f-mitre"   placeholder="MITRE technique…" style="width:140px" />
-        <button class="btn" id="f-apply">Apply</button>
-        <button class="btn btn-danger" id="f-reset">Reset</button>
+        <input id="f-mitre" placeholder="MITRE (e.g. T1059)…" style="width:160px" />
+        <button class="btn btn-danger" id="f-reset">Clear</button>
       </div>
 
-      <div class="alert-grid" id="alerts-list">
-        ${renderCards(alerts)}
+      <div class="panel">
+        <div id="alerts-wrap" style="overflow-x:auto">
+          ${renderRows(alerts)}
+        </div>
       </div>
     `
 
@@ -45,22 +45,27 @@ export async function render(el, params = {}) {
       if (process) filtered = filtered.filter(a => a.process_name.toLowerCase().includes(process))
       if (mitre)   filtered = filtered.filter(a => a.mitre.some(m => m.includes(mitre)))
 
-      el.querySelector('#alerts-list').innerHTML = renderCards(filtered)
-      bindCards()
+      el.querySelector('#alerts-wrap').innerHTML = renderRows(filtered)
+      bindRows()
     }
 
-    el.querySelector('#f-apply').addEventListener('click', applyFilters)
+    ['#f-process', '#f-mitre'].forEach(id => {
+      el.querySelector(id).addEventListener('input', applyFilters)
+    })
+    ;['#f-level', '#f-agent'].forEach(id => {
+      el.querySelector(id).addEventListener('change', applyFilters)
+    })
     el.querySelector('#f-reset').addEventListener('click', () => {
       el.querySelectorAll('#alert-filters input, #alert-filters select').forEach(i => i.value = '')
-      el.querySelector('#alerts-list').innerHTML = renderCards(alerts)
-      bindCards()
+      el.querySelector('#alerts-wrap').innerHTML = renderRows(alerts)
+      bindRows()
     })
-    bindCards()
+    bindRows()
 
-    function bindCards() {
-      el.querySelectorAll('.alert-card[data-id]').forEach(card => {
-        card.addEventListener('click', () => {
-          window.location.hash = '#/alerts/' + card.dataset.id
+    function bindRows() {
+      el.querySelectorAll('tr[data-id]').forEach(row => {
+        row.addEventListener('click', () => {
+          window.location.hash = '#/alerts/' + row.dataset.id
         })
       })
     }
@@ -69,35 +74,42 @@ export async function render(el, params = {}) {
   }
 }
 
-function renderCards(alerts) {
+function renderRows(alerts) {
   if (!alerts.length) return '<div class="empty">No alerts match filters</div>'
-  return alerts.map(a => `
-    <div class="alert-card level-${a.risk_level}" data-id="${a.id}">
-      <div class="alert-top">
-        <span class="badge badge-${a.risk_level}">${a.risk_level}</span>
-        <span class="alert-process">${a.process_name}</span>
-        ${a.parent_name ? `<span class="alert-parent">← ${a.parent_name}</span>` : ''}
-        <span style="margin-left:auto">
-          ${a.category ? `<span style="font-size:11px;color:var(--text-muted);background:var(--border);padding:2px 7px;border-radius:3px">${a.category}</span>` : ''}
-        </span>
-      </div>
-      <div class="alert-meta">
-        <div class="alert-meta-item"><span class="key">Risk Score: </span><span class="val" style="color:${riskColor(a.risk_level)}">${a.risk_score}</span></div>
-        <div class="alert-meta-item"><span class="key">ML Probability: </span><span class="val">${Math.round(a.ml_score * 100)}%</span></div>
-        <div class="alert-meta-item"><span class="key">Confidence: </span><span class="val">${a.confidence_label}</span></div>
-        <div class="alert-meta-item"><span class="key">Agent: </span><span class="val">${a.agent_id}</span></div>
-      </div>
-      <ul class="alert-reasons">
-        ${(a.reasons || []).slice(0,4).map(r => `<li>${r}</li>`).join('')}
-      </ul>
-      <div class="alert-footer">
-        <div class="alert-mitre">
-          ${(a.mitre || []).map(m => `<span class="mitre-tag">${m}</span>`).join('')}
-        </div>
-        <span class="alert-time">${fmtDate(a.timestamp)}</span>
-      </div>
-    </div>
-  `).join('')
+  return `
+    <table class="data-table">
+      <thead><tr>
+        <th>Level</th>
+        <th>Process</th>
+        <th>Parent</th>
+        <th>Category</th>
+        <th>Score</th>
+        <th>ML</th>
+        <th>Confidence</th>
+        <th>Time</th>
+      </tr></thead>
+      <tbody>
+        ${alerts.map(a => `
+          <tr class="row-${a.risk_level} clickable" data-id="${a.id}">
+            <td><span class="badge badge-${a.risk_level}">${a.risk_level}</span></td>
+            <td class="process-name">${escHtml(a.process_name)}</td>
+            <td style="color:var(--text-muted)">${escHtml(a.parent_name || '—')}</td>
+            <td style="font-size:12px">${escHtml(a.category || '—')}</td>
+            <td style="font-weight:600;color:${riskColor(a.risk_level)}">${a.risk_score}</td>
+            <td style="font-family:var(--font-mono);font-size:12px;${a.ml_score >= .8 ? 'color:var(--crit)' : ''}">${Math.round(a.ml_score * 100)}%</td>
+            <td>
+              <span style="font-size:12px;color:var(--text-muted)">${a.confidence_label}</span>
+            </td>
+            <td style="font-size:12px;color:var(--text-muted);white-space:nowrap">${fmtDate(a.timestamp)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 }
 
 async function renderDetail(el, id) {
@@ -112,7 +124,7 @@ async function renderDetail(el, id) {
 
       <div class="detail-hero">
         <div class="detail-level" style="color:${riskColor(a.risk_level)}">${a.risk_level} — ${a.category || 'Suspicious Behavior'}</div>
-        <div class="detail-title">${a.process_name}</div>
+        <div class="detail-title">${escHtml(a.process_name)}</div>
         <div class="detail-stats">
           <div class="detail-stat">
             <div class="key">Risk Score</div>
@@ -133,18 +145,18 @@ async function renderDetail(el, id) {
         <div class="detail-section">
           <div class="detail-section-title">Process Info</div>
           <div style="display:flex;flex-direction:column;gap:10px">
-            <div><div style="font-size:11px;color:var(--text-muted)">Process</div><div class="detail-value">${a.process_name}</div></div>
-            <div><div style="font-size:11px;color:var(--text-muted)">Parent</div><div class="detail-value">${a.parent_name || '—'}</div></div>
-            <div><div style="font-size:11px;color:var(--text-muted)">PID</div><div class="detail-value">${a.pid}</div></div>
-            <div><div style="font-size:11px;color:var(--text-muted)">Agent</div><div class="detail-value">${a.agent_id}</div></div>
-            <div><div style="font-size:11px;color:var(--text-muted)">Timestamp</div><div class="detail-value">${fmtDate(a.timestamp)}</div></div>
+            <div><div style="font-size:12px;color:var(--text-muted)">Process</div><div class="detail-value">${escHtml(a.process_name)}</div></div>
+            <div><div style="font-size:12px;color:var(--text-muted)">Parent</div><div class="detail-value">${escHtml(a.parent_name || '—')}</div></div>
+            <div><div style="font-size:12px;color:var(--text-muted)">PID</div><div class="detail-value">${a.pid}</div></div>
+            <div><div style="font-size:12px;color:var(--text-muted)">Agent</div><div class="detail-value">${escHtml(a.agent_id)}</div></div>
+            <div><div style="font-size:12px;color:var(--text-muted)">Timestamp</div><div class="detail-value">${fmtDate(a.timestamp)}</div></div>
           </div>
         </div>
 
         <div class="detail-section">
           <div class="detail-section-title">Detection Reasons</div>
           <ul class="detail-reasons">
-            ${(a.reasons || []).map(r => `<li>${r}</li>`).join('')}
+            ${(a.reasons || []).map(r => `<li>${escHtml(r)}</li>`).join('')}
           </ul>
         </div>
 
@@ -154,7 +166,7 @@ async function renderDetail(el, id) {
             ${(a.mitre || []).map(m => `
               <div class="mitre-item">
                 <span class="code">${m}</span>
-                <span class="name">${MITRE_NAMES[m] ?? MITRE_NAMES[m.split('.')[0]] ?? 'Unknown Technique'}</span>
+                <span class="name">${escHtml(MITRE_NAMES[m] ?? MITRE_NAMES[m.split('.')[0]] ?? 'Unknown Technique')}</span>
               </div>
             `).join('')}
           </div>
@@ -167,7 +179,7 @@ async function renderDetail(el, id) {
               ${(a.timeline || []).map(e => `
                 <div class="tl-item p-${e.priority || 'LOW'}">
                   <div class="tl-time">${e.time}</div>
-                  <div class="tl-event">${e.event}</div>
+                  <div class="tl-event">${escHtml(e.event)}</div>
                 </div>
               `).join('') || '<span style="color:var(--text-muted);font-size:12px">No timeline data</span>'}
             </div>

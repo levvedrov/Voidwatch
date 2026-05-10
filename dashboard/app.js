@@ -1,93 +1,77 @@
-import { api, ago } from './api.js'
+import { api, parseUTC, ago } from './api.js'
 import { render as renderDashboard }  from './pages/dashboard.js'
-import { render as renderAlerts }     from './pages/alerts.js'
 import { render as renderProcesses }  from './pages/processes.js'
-import { render as renderTimeline }   from './pages/timeline.js'
 import { render as renderMitre }      from './pages/mitre.js'
-import { render as renderAgents }     from './pages/agents.js'
 
-const content   = document.getElementById('content')
-const overlay   = document.getElementById('modal-overlay')
-const modalBody = document.getElementById('modal-body')
-const modalTitle = document.getElementById('modal-title')
-document.getElementById('modal-close').addEventListener('click', closeModal)
-overlay.addEventListener('click', e => { if (e.target === overlay) closeModal() })
+const content = document.getElementById('content')
 
-export function openModal(title, text) {
-  modalTitle.textContent = title
-  modalBody.textContent  = text
-  overlay.classList.add('open')
-}
-export function closeModal() {
-  overlay.classList.remove('open')
-}
+// ── Window controls ──────────────────────────────────────────
+document.getElementById('btn-minimize').addEventListener('click', () => __vw.minimize())
+document.getElementById('btn-maximize').addEventListener('click', () => __vw.maximize())
+document.getElementById('btn-close').addEventListener('click',    () => __vw.close())
 
-// ── Router ──────────────────────────────────────────────────
+// ── Router ───────────────────────────────────────────────────
 function parseHash() {
   const raw = window.location.hash.replace(/^#\/?/, '') || 'dashboard'
-  const parts = raw.split('/')
-  return { page: parts[0], id: parts[1] ?? null }
+  return raw.split('/')[0]
 }
 
 async function route() {
-  const { page, id } = parseHash()
+  const page = parseHash()
 
-  document.querySelectorAll('.nav-item').forEach(el => {
+  document.querySelectorAll('.nav-tab').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page)
   })
 
-  content.innerHTML = '<div class="loading">Loading…</div>'
+  content.style.opacity = '0.35'
   try {
     switch (page) {
-      case 'dashboard':  await renderDashboard(content);            break
-      case 'agents':     await renderAgents(content);               break
-      case 'processes':  await renderProcesses(content);            break
-      case 'alerts':     await renderAlerts(content, { id });       break
-      case 'timeline':   await renderTimeline(content);             break
-      case 'mitre':      await renderMitre(content);                break
-      default:           await renderDashboard(content);
+      case 'processes': await renderProcesses(content);  break
+      case 'mitre':     await renderMitre(content);      break
+      default:          await renderDashboard(content);
     }
   } catch(e) {
     content.innerHTML = `<div class="empty">Error: ${e.message}</div>`
     console.error(e)
   }
+  content.style.opacity = '1'
 }
 
 window.addEventListener('hashchange', route)
-window.addEventListener('load',       route)
+window.addEventListener('load', route)
 
-// ── Header updater ───────────────────────────────────────────
-async function updateHeader() {
+// ── Status bar ───────────────────────────────────────────────
+async function updateStatus() {
   const ok = await api.ping()
-  const statusEl = document.getElementById('backend-status')
-  statusEl.textContent = ok ? '● backend connected' : '● backend offline'
-  statusEl.className = 'backend-status ' + (ok ? 'ok' : 'err')
+  const el = document.getElementById('conn-status')
 
   if (!ok) {
-    document.getElementById('header-telemetry').textContent = 'Backend offline'
+    el.textContent = 'Backend offline'
+    el.className = 'conn-status offline'
     return
   }
 
   try {
-    const [agents, alerts] = await Promise.all([api.agents(), api.alerts({ limit: 1 })])
-    const latest = agents.sort((a,b) => new Date(b.last_seen) - new Date(a.last_seen))[0]
-    if (latest) {
-      document.getElementById('header-agent').textContent =
-        `${latest.hostname}  (${latest.username})  ` +
-        `● ${(Date.now() - new Date(latest.last_seen)) < 30000 ? 'Online' : 'Offline'}`
+    const agents = await api.agents()
+    if (!agents.length) {
+      el.textContent = 'No agents'
+      el.className = 'conn-status'
+      return
     }
-    if (alerts.length) {
-      document.getElementById('header-telemetry').textContent =
-        'Last telemetry: ' + ago(alerts[0].timestamp)
-    }
-  } catch {}
+    const latest = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
+    const online = (Date.now() - parseUTC(latest.last_seen)) < 30000
+    el.textContent = `${latest.hostname}  (${latest.username})  ${online ? 'Online' : 'Offline'}`
+    el.className = 'conn-status ' + (online ? 'online' : 'offline')
+  } catch {
+    el.textContent = 'Connected'
+    el.className = 'conn-status online'
+  }
 }
 
-updateHeader()
-setInterval(updateHeader, 10_000)
+updateStatus()
+setInterval(updateStatus, 10_000)
 
 // Dashboard auto-refresh
 setInterval(() => {
-  const { page } = parseHash()
-  if (page === 'dashboard') renderDashboard(content)
+  if (parseHash() === 'dashboard') renderDashboard(content)
 }, 15_000)

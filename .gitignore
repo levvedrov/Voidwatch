@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+
+# ML model & database (generated at runtime)
+backend/voidwatch.db
+backend/voidwatch_rf.joblib
+backend/voidwatch_scaler.joblib
+
+# Agent ID (machine-specific)
+agent/.agent_id
+
+# Node
+dashboard/node_modules/
+
+# Electron build output
+dashboard/dist/
+dashboard/out/
+
+# OS
+.DS_Store
+Thumbs.db

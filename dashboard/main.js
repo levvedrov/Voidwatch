@@ -1,37 +1,24 @@
-const { app, BrowserWindow } = require('electron')
-const path = require('path')
+const { app, BrowserWindow, ipcMain } = require('electron')
+const path   = require('path')
 const { spawn } = require('child_process')
 
 const ROOT = path.join(__dirname, '..')
 let win, backendProc, agentProc
 
 function spawnPython(script, cwd) {
-  return spawn('python', [script], {
-    cwd,
-    windowsHide: true,
-    stdio: 'ignore',
-  })
+  return spawn('python', [script], { cwd, windowsHide: true, stdio: 'ignore' })
 }
 
 function killProc(proc) {
   if (!proc) return
-  try {
-    // On Windows, kill the whole process tree so subprocesses don't linger
-    spawn('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { windowsHide: true })
-  } catch { proc.kill() }
+  try { spawn('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { windowsHide: true }) }
+  catch { proc.kill() }
 }
 
 function startPython() {
-  backendProc = spawnPython(
-    path.join(ROOT, 'backend', 'main.py'),
-    path.join(ROOT, 'backend')
-  )
-  // Give backend 3 s to bind its port before the agent starts sending
+  backendProc = spawnPython(path.join(ROOT, 'backend', 'main.py'), path.join(ROOT, 'backend'))
   setTimeout(() => {
-    agentProc = spawnPython(
-      path.join(ROOT, 'agent', 'main.py'),
-      path.join(ROOT, 'agent')
-    )
+    agentProc = spawnPython(path.join(ROOT, 'agent', 'main.py'), path.join(ROOT, 'agent'))
   }, 3000)
 }
 
@@ -42,11 +29,10 @@ function stopPython() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
-    backgroundColor: '#0b0f14',
+    width: 1440, height: 900,
+    minWidth: 900, minHeight: 600,
+    frame: false,
+    backgroundColor: '#000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -57,9 +43,12 @@ function createWindow() {
   win.loadFile('index.html')
 }
 
+ipcMain.on('win-minimize', () => win?.minimize())
+ipcMain.on('win-maximize', () => win?.isMaximized() ? win.unmaximize() : win?.maximize())
+ipcMain.on('win-close',    () => win?.close())
+
 app.whenReady().then(() => {
   startPython()
-  // Show window after backend has had time to start
   setTimeout(createWindow, 2500)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

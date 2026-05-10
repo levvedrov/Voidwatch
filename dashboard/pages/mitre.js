@@ -1,9 +1,8 @@
-import { api, MITRE_NAMES, riskColor } from '../api.js'
+import { api, MITRE_NAMES, scoreColor } from '../api.js'
 
 const LEVEL_ORDER = { SEVERE:5, CRITICAL:4, HIGH:3, MEDIUM:2, LOW:1 }
 
 export async function render(el) {
-  el.innerHTML = '<div class="loading">Loading MITRE data…</div>'
   try {
     const alerts = await api.alerts({ limit: 1000 })
 
@@ -13,8 +12,8 @@ export async function render(el) {
         if (!map[tech]) map[tech] = { count: 0, maxScore: 0, maxLevel: 'LOW' }
         map[tech].count++
         if (a.risk_score > map[tech].maxScore) {
-          map[tech].maxScore  = a.risk_score
-          map[tech].maxLevel  = a.risk_level
+          map[tech].maxScore = a.risk_score
+          map[tech].maxLevel = a.risk_level
         }
       })
     })
@@ -23,34 +22,33 @@ export async function render(el) {
       .sort((a, b) => (LEVEL_ORDER[b[1].maxLevel] - LEVEL_ORDER[a[1].maxLevel]) || b[1].count - a[1].count)
 
     el.innerHTML = `
-      <div class="page-title">MITRE ATT&CK Mapping <span class="sub">${rows.length} techniques observed</span></div>
+      <div class="page-title">MITRE ATT&CK <span class="sub">${rows.length} techniques observed</span></div>
 
       ${rows.length === 0
         ? '<div class="empty">No MITRE data yet — run the agent to collect alerts</div>'
-        : `
-        <div class="panel mitre-page-table">
-          <table class="data-table">
-            <thead><tr>
-              <th>Technique</th>
-              <th>Name</th>
-              <th>Alerts</th>
-              <th>Max Risk Score</th>
-              <th>Max Level</th>
-            </tr></thead>
-            <tbody>
-              ${rows.map(([tech, d]) => `
-                <tr class="row-${d.maxLevel}">
-                  <td><span class="mitre-tag">${tech}</span></td>
-                  <td style="color:var(--text)">${MITRE_NAMES[tech] ?? MITRE_NAMES[tech.split('.')[0]] ?? '—'}</td>
-                  <td style="color:var(--text)">${d.count}</td>
-                  <td style="color:${riskColor(d.maxLevel)};font-weight:700">${d.maxScore}</td>
-                  <td><span class="badge badge-${d.maxLevel}">${d.maxLevel}</span></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
+        : `<div class="panel">
+            <table class="data-table">
+              <thead><tr>
+                <th style="width:16px"></th>
+                <th>Technique</th>
+                <th>Name</th>
+                <th>Alerts</th>
+                <th>Max Score</th>
+              </tr></thead>
+              <tbody>
+                ${rows.map(([tech, d]) => `
+                  <tr class="row-${d.maxLevel}">
+                    <td><span class="risk-dot rdot-${d.maxLevel}"></span></td>
+                    <td><span class="mitre-tag">${tech}</span></td>
+                    <td style="color:var(--text)">${MITRE_NAMES[tech] ?? MITRE_NAMES[tech.split('.')[0]] ?? '—'}</td>
+                    <td style="color:var(--text-sec)">${d.count}</td>
+                    <td style="font-weight:700;color:${scoreColor(d.maxScore)}">${d.maxScore}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>`
+      }
     `
   } catch(e) {
     el.innerHTML = `<div class="empty">Failed to load: ${e.message}</div>`
