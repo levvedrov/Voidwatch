@@ -2,7 +2,7 @@ import datetime
 
 import requests
 
-from config import AGENT_ID, SERVER_URL
+from config import AGENT_ID, API_KEY, SERVER_URL
 from metadata import collect as collect_metadata
 
 
@@ -35,9 +35,11 @@ def _serialize(events: list) -> dict:
 
 def send_telemetry(events: list) -> bool:
     try:
+        headers = {"X-API-Key": API_KEY} if API_KEY else {}
         resp = requests.post(
             f"{SERVER_URL}/telemetry",
             json=_serialize(events),
+            headers=headers,
             timeout=10,
         )
         return resp.status_code == 201

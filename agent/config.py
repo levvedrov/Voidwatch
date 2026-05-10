@@ -1,8 +1,10 @@
+import os
 import socket
 import uuid
 from pathlib import Path
 
-SERVER_URL = "http://localhost:8000"
+SERVER_URL = os.environ.get("VOIDWATCH_SERVER_URL", "http://localhost:8000")
+API_KEY    = os.environ.get("VOIDWATCH_API_KEY", "")
 
 _ID_FILE = Path(__file__).parent / ".agent_id"
 

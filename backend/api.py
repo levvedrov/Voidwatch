@@ -1,8 +1,9 @@
 import json
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import AgentRecord, AlertRecord, ProcessRecord, get_db
@@ -10,6 +11,14 @@ from models import AgentOut, AlertOut, ProcessOut, TelemetryPayload
 from scoring import score_batch
 
 router = APIRouter()
+
+_API_KEY       = os.environ.get("VOIDWATCH_API_KEY", "")
+_DEDUP_WINDOW  = timedelta(minutes=10)
+
+
+def _check_auth(x_api_key: str = Header(default="")) -> None:
+    if _API_KEY and x_api_key != _API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +77,7 @@ def _upsert_agent(db: Session, agent_id: str, metadata: dict | None) -> None:
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/telemetry", status_code=201)
+@router.post("/telemetry", status_code=201, dependencies=[Depends(_check_auth)])
 def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
     ts   = payload.timestamp or datetime.utcnow()
     meta = payload.metadata.model_dump() if payload.metadata else None
@@ -90,7 +99,17 @@ def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
         ))
 
     alerts = score_batch(payload.agent_id, payload.processes)
+    cutoff  = ts - _DEDUP_WINDOW
+    added   = 0
     for a in alerts:
+        duplicate = db.query(AlertRecord).filter(
+            AlertRecord.agent_id     == a["agent_id"],
+            AlertRecord.process_name == a["process_name"],
+            AlertRecord.risk_level   == a["risk_level"],
+            AlertRecord.timestamp    >= cutoff,
+        ).first()
+        if duplicate:
+            continue
         db.add(AlertRecord(
             agent_id=a["agent_id"], timestamp=ts,
             pid=a["pid"], process_name=a["process_name"], parent_name=a["parent_name"],
@@ -102,12 +121,13 @@ def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
             ml_score=a["ml_score"],
             timeline=json.dumps(a["timeline"]),
         ))
+        added += 1
 
     db.commit()
-    return {"received": len(payload.processes), "alerts_generated": len(alerts)}
+    return {"received": len(payload.processes), "alerts_generated": added}
 
 
-@router.get("/processes", response_model=list[ProcessOut])
+@router.get("/processes", response_model=list[ProcessOut], dependencies=[Depends(_check_auth)])
 def get_processes(
     agent_id: Optional[str] = Query(None),
     limit: int = Query(200, le=1000),
@@ -119,7 +139,7 @@ def get_processes(
     return [_proc_to_out(r) for r in q.order_by(ProcessRecord.timestamp.desc()).limit(limit)]
 
 
-@router.get("/alerts", response_model=list[AlertOut])
+@router.get("/alerts", response_model=list[AlertOut], dependencies=[Depends(_check_auth)])
 def get_alerts(
     agent_id: Optional[str] = Query(None),
     min_score: int = Query(0, ge=0, le=150),
@@ -139,7 +159,7 @@ def get_alerts(
     return [_alert_to_out(r) for r in q.order_by(AlertRecord.timestamp.desc())]
 
 
-@router.get("/agents", response_model=list[AgentOut])
+@router.get("/agents", response_model=list[AgentOut], dependencies=[Depends(_check_auth)])
 def get_agents(db: Session = Depends(get_db)):
     return [
         AgentOut(
@@ -151,7 +171,7 @@ def get_agents(db: Session = Depends(get_db)):
     ]
 
 
-@router.get("/timeline")
+@router.get("/timeline", dependencies=[Depends(_check_auth)])
 def get_timeline(
     agent_id: Optional[str] = Query(None),
     limit: int = Query(100, le=500),

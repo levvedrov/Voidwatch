@@ -11,6 +11,8 @@ import numpy as np
 import joblib
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import cross_val_predict
+from sklearn.metrics import classification_report, confusion_matrix
 
 from features import extract, FEATURE_NAMES
 
@@ -19,6 +21,12 @@ SCALER_PATH = os.path.join(os.path.dirname(__file__), "voidwatch_scaler.joblib")
 
 N_FEATURES = len(FEATURE_NAMES)
 RNG = np.random.default_rng(42)
+
+# Indices of continuous features that must NOT be binarized after noise injection
+_CONTINUOUS_IDX = frozenset(
+    i for i, name in enumerate(FEATURE_NAMES)
+    if name in ("connection_count", "rule_score_norm")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -32,9 +40,9 @@ def _noise(n: int, scale: float = 0.08) -> np.ndarray:
 def _repeat(template: list[float], n: int) -> np.ndarray:
     base = np.tile(template, (n, 1)).astype(float)
     noisy = np.clip(base + _noise(n), 0, None)
-    # keep binary features binary after noise
-    for i in range(N_FEATURES - 2):  # last two are connection_count and rule_score_norm
-        noisy[:, i] = (noisy[:, i] > 0.5).astype(float)
+    for i in range(N_FEATURES):
+        if i not in _CONTINUOUS_IDX:
+            noisy[:, i] = (noisy[:, i] > 0.5).astype(float)
     return noisy
 
 
@@ -193,6 +201,14 @@ class ProcessClassifier:
             n_jobs=-1,
         )
         self.rf.fit(X_s, y)
+
+        # 5-fold cross-validated metrics
+        y_pred = cross_val_predict(self.rf, X_s, y, cv=5)
+        print("\n── Classifier metrics (5-fold CV) ──────────────────")
+        print(classification_report(y, y_pred, target_names=["benign", "malicious"], digits=3))
+        cm = confusion_matrix(y, y_pred)
+        print(f"Confusion matrix:\n  TN={cm[0,0]}  FP={cm[0,1]}\n  FN={cm[1,0]}  TP={cm[1,1]}\n")
+
         joblib.dump(self.rf,     MODEL_PATH)
         joblib.dump(self.scaler, SCALER_PATH)
 
