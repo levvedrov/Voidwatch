@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src http://localhost:8000; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>Voidwatch</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-icon">⬡</span>
+      <span class="logo-text">VOIDWATCH</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="#/dashboard"  class="nav-item" data-page="dashboard">
+        <span class="nav-icon">▦</span> Dashboard
+      </a>
+      <a href="#/agents"     class="nav-item" data-page="agents">
+        <span class="nav-icon">◉</span> Agents
+      </a>
+      <a href="#/processes"  class="nav-item" data-page="processes">
+        <span class="nav-icon">≡</span> Processes
+      </a>
+      <a href="#/alerts"     class="nav-item" data-page="alerts">
+        <span class="nav-icon">⚑</span> Alerts
+      </a>
+      <a href="#/timeline"   class="nav-item" data-page="timeline">
+        <span class="nav-icon">⌚</span> Timeline
+      </a>
+      <a href="#/mitre"      class="nav-item" data-page="mitre">
+        <span class="nav-icon">◈</span> MITRE
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="backend-status" id="backend-status">● connecting...</span>
+    </div>
+  </aside>
+
+  <!-- Main area -->
+  <div class="main">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <span class="header-title">Voidwatch Endpoint Security</span>
+      </div>
+      <div class="header-right">
+        <span class="header-meta" id="header-agent">—</span>
+        <span class="header-divider">|</span>
+        <span class="header-meta" id="header-telemetry">No data yet</span>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <main class="content" id="content">
+      <div class="loading">Loading...</div>
+    </main>
+
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <span id="modal-title">Details</span>
+        <button class="modal-close" id="modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

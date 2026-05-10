@@ -2,6 +2,13 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class AgentMetadata(BaseModel):
+    hostname: str
+    os: str
+    ip: str
+    username: str
+
+
 class ProcessData(BaseModel):
     name: str
     parent_name: str
@@ -22,6 +29,7 @@ class ProcessData(BaseModel):
 class TelemetryPayload(BaseModel):
     agent_id: str
     timestamp: datetime
+    metadata: AgentMetadata | None = None
     processes: list[ProcessData]
 
 
@@ -48,8 +56,26 @@ class ProcessOut(BaseModel):
 class AlertOut(BaseModel):
     id: int
     agent_id: str
+    timestamp: datetime
     pid: int
     process_name: str
-    reason: str
-    score: float
-    timestamp: datetime
+    parent_name: str
+    risk_score: int
+    risk_level: str
+    confidence: float
+    confidence_label: str
+    category: str
+    reasons: list[str]
+    mitre: list[str]
+    ml_score: float
+    timeline: list[dict]
+
+
+class AgentOut(BaseModel):
+    agent_id: str
+    hostname: str
+    os: str
+    ip: str
+    username: str
+    first_seen: datetime
+    last_seen: datetime

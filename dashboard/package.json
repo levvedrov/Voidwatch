@@ -1,0 +1,12 @@
+{
+  "name": "voidwatch-dashboard",
+  "version": "1.0.0",
+  "description": "Voidwatch SOC Dashboard",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^35.0.0"
+  }
+}

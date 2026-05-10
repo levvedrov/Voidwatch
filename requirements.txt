@@ -4,3 +4,6 @@ requests
 fastapi
 uvicorn[standard]
 sqlalchemy
+scikit-learn
+numpy
+joblib
