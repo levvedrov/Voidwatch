@@ -12,7 +12,7 @@ Usage:
   python collect_benign.py --interval 10     # faster snapshots
 
 Output:
-  collected_YYYYMMDD_HHMMSS.json  (saved next to this script)
+  ./data/collected_YYYYMMDD_HHMMSS.json
 
 Transfer the output file to:
   backend/datasets/otrf/benign/
@@ -25,13 +25,21 @@ import argparse
 import hashlib
 import json
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import psutil
 
-OUTPUT_DIR = Path(__file__).parent
+# When built with PyInstaller --onefile, __file__ points to a temp unpack dir.
+# sys.executable always points to the actual exe location.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).parent
+
+OUTPUT_DIR = BASE_DIR / "data"
 
 
 def _sha256(path: str) -> str:
@@ -141,12 +149,13 @@ def _snapshot() -> tuple[list[dict], list[dict]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Collect benign process telemetry for Voidwatch ML training")
-    parser.add_argument("--duration", type=int, default=60,
-                        help="Collection duration in minutes (default: 60)")
+    parser.add_argument("--duration", type=int, default=180,
+                        help="Collection duration in minutes (default: 180)")
     parser.add_argument("--interval", type=int, default=30,
                         help="Snapshot interval in seconds (default: 30)")
     args = parser.parse_args()
 
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ts_str   = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = OUTPUT_DIR / f"collected_{ts_str}.json"
 
