@@ -7,13 +7,18 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import AgentRecord, AlertRecord, ProcessRecord, get_db
-from models import AgentOut, AlertOut, ProcessOut, TelemetryPayload
+from models import AgentOut, AlertOut, ProcessOut, RegisterPayload, TelemetryPayload
 from scoring import score_batch
 
 router = APIRouter()
 
 _API_KEY       = os.environ.get("VOIDWATCH_API_KEY", "")
 _DEDUP_WINDOW  = timedelta(minutes=10)
+
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 def _check_auth(x_api_key: str = Header(default="")) -> None:
@@ -76,6 +81,13 @@ def _upsert_agent(db: Session, agent_id: str, metadata: dict | None) -> None:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.post("/register", status_code=200, dependencies=[Depends(_check_auth)])
+def register_agent(payload: RegisterPayload, db: Session = Depends(get_db)):
+    _upsert_agent(db, payload.agent_id, payload.metadata.model_dump())
+    db.commit()
+    return {"status": "ok"}
+
 
 @router.post("/telemetry", status_code=201, dependencies=[Depends(_check_auth)])
 def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
@@ -145,6 +157,7 @@ def get_alerts(
     min_score: int = Query(0, ge=0, le=150),
     risk_level: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    limit: int = Query(500, le=5000),
     db: Session = Depends(get_db),
 ):
     q = db.query(AlertRecord)
@@ -156,7 +169,7 @@ def get_alerts(
         q = q.filter(AlertRecord.risk_level == risk_level.upper())
     if category:
         q = q.filter(AlertRecord.category == category)
-    return [_alert_to_out(r) for r in q.order_by(AlertRecord.timestamp.desc())]
+    return [_alert_to_out(r) for r in q.order_by(AlertRecord.timestamp.desc()).limit(limit)]
 
 
 @router.get("/agents", response_model=list[AgentOut], dependencies=[Depends(_check_auth)])

@@ -1,16 +1,15 @@
-import { api, fmt, ago, scoreColor, mlColor, parseUTC } from '../api.js'
+import { api, fmt, ago, scoreColor, mlColor, parseUTC, esc } from '../api.js'
 
 const LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'SEVERE']
 const HIGH_PLUS = new Set(['HIGH', 'CRITICAL', 'SEVERE'])
 
 export async function render(el) {
-  try {
-    const [alerts, agents] = await Promise.all([
-      api.alerts({ limit: 500 }),
-      api.agents(),
-    ])
+  const [alerts, agents] = await Promise.all([
+    api.alerts({ limit: 500 }),
+    api.agents(),
+  ])
 
-    const today       = new Date().toDateString()
+  const today       = new Date().toDateString()
     const todayAlerts = alerts.filter(a => new Date(a.timestamp).toDateString() === today)
     const severeCount = alerts.filter(a => HIGH_PLUS.has(a.risk_level)).length
     const avgRisk     = alerts.length ? Math.round(alerts.reduce((s, a) => s + a.risk_score, 0) / alerts.length) : 0
@@ -61,7 +60,7 @@ export async function render(el) {
         </div>
         <div class="stat-card">
           <div class="stat-label">Last Seen</div>
-          <div class="stat-value" style="font-size:16px;padding-top:4px">${lastSeen}</div>
+          <div class="stat-value" data-ago="${latestAgent?.last_seen ?? ''}" style="font-size:16px;padding-top:4px">${lastSeen}</div>
         </div>
       </div>
 
@@ -116,11 +115,5 @@ export async function render(el) {
         </div>
       </div>
     `
-  } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load dashboard: ${e.message}</div>`
-  }
 }
 
-function esc(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-}

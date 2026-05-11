@@ -8,7 +8,7 @@ async function get(path) {
 
 export const api = {
   base: BASE,
-  async ping() { try { await fetch(BASE + '/agents'); return true } catch { return false } },
+  async ping() { try { const r = await fetch(BASE + '/health'); return r.ok } catch { return false } },
   alerts(params = {})    { return get('/alerts?'  + new URLSearchParams(params)) },
   processes(params = {}) { return get('/processes?' + new URLSearchParams(params)) },
   agents()               { return get('/agents') },
@@ -83,4 +83,8 @@ export function fmtDate(ts) {
   if (!ts) return '—'
   const d = toUTC(ts)
   return d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB', { hour12: false })
+}
+
+export function esc(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }

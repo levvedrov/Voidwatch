@@ -1,13 +1,12 @@
-import { api, scoreColor } from '../api.js'
+import { api, scoreColor, esc } from '../api.js'
 
 export async function render(el) {
-  try {
-    const [procs, alerts] = await Promise.all([
-      api.processes({ limit: 1000 }),
-      api.alerts({ limit: 2000 }),
-    ])
+  const [procs, alerts] = await Promise.all([
+    api.processes({ limit: 1000 }),
+    api.alerts({ limit: 2000 }),
+  ])
 
-    // Build risk map: pid → highest alert for that pid
+  // Build risk map: pid → highest alert for that pid
     const riskByPid = {}
     alerts.forEach(a => {
       if (!riskByPid[a.pid] || a.risk_score > riskByPid[a.pid].risk_score)
@@ -24,15 +23,13 @@ export async function render(el) {
     let visible = procs
 
     el.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="toolbar">
         <div class="page-title" style="margin-bottom:0">
           Processes <span class="sub" id="proc-count">${procs.length} running</span>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="ps-search" placeholder="Search…"
-            style="background:#111;border:1px solid #1e1e1e;border-radius:5px;padding:5px 10px;color:#f1f5f9;font-size:13px;outline:none;width:200px" />
-          <select id="ps-filter"
-            style="background:#111;border:1px solid #1e1e1e;border-radius:5px;padding:5px 10px;color:#94a3b8;font-size:13px;outline:none">
+        <div class="toolbar-controls">
+          <input id="ps-search" class="toolbar-input" placeholder="Search…" />
+          <select id="ps-filter" class="toolbar-select">
             <option value="">All</option>
             <option value="risk">Has risk only</option>
             <option value="net">With connections</option>
@@ -64,12 +61,8 @@ export async function render(el) {
       el.querySelector('#proc-list').innerHTML = buildRows(visible, riskByPid, riskByName)
     }
 
-    el.querySelector('#ps-search').addEventListener('input', applyFilters)
-    el.querySelector('#ps-filter').addEventListener('change', applyFilters)
-
-  } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load processes: ${e.message}</div>`
-  }
+  el.querySelector('#ps-search').addEventListener('input', applyFilters)
+  el.querySelector('#ps-filter').addEventListener('change', applyFilters)
 }
 
 function buildRows(procs, riskByPid, riskByName) {
@@ -118,6 +111,3 @@ function buildRows(procs, riskByPid, riskByName) {
   }).join('')
 }
 
-function esc(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-}

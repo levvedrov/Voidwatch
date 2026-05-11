@@ -38,7 +38,32 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route)
-window.addEventListener('load', route)
+
+async function waitForBackend(timeoutMs = 40_000, intervalMs = 800) {
+  const deadline = Date.now() + timeoutMs
+  let dots = 0
+  const el = document.getElementById('content')
+
+  while (Date.now() < deadline) {
+    if (await api.ping()) return true
+    dots = (dots + 1) % 4
+    el.innerHTML = `<div class="startup-screen">
+      <div class="startup-spinner"></div>
+      <span>Starting Voidwatch${'.'.repeat(dots)}</span>
+    </div>`
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+  return false
+}
+
+window.addEventListener('load', async () => {
+  const ok = await waitForBackend()
+  if (!ok) {
+    content.innerHTML = `<div class="empty">Backend failed to start.<br>Check that Python and dependencies are installed, then restart.</div>`
+    return
+  }
+  route()
+})
 
 // ── Status bar ───────────────────────────────────────────────
 async function updateStatus() {
@@ -72,6 +97,15 @@ updateStatus()
 setInterval(updateStatus, 10_000)
 
 // Dashboard auto-refresh
-setInterval(() => {
-  if (parseHash() === 'dashboard') renderDashboard(content)
+setInterval(async () => {
+  if (parseHash() !== 'dashboard') return
+  try { await renderDashboard(content) } catch (e) { console.error('auto-refresh:', e) }
 }, 15_000)
+
+// Live-tick all [data-ago] timestamps every second
+setInterval(() => {
+  document.querySelectorAll('[data-ago]').forEach(el => {
+    const ts = el.dataset.ago
+    if (ts) el.textContent = ago(ts)
+  })
+}, 1000)
