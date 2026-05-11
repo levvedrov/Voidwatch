@@ -79,8 +79,8 @@ async function updateStatus() {
   try {
     const agents = await api.agents()
     if (!agents.length) {
-      el.textContent = 'No agents'
-      el.className = 'conn-status'
+      el.textContent = 'Waiting for agent'
+      el.className = 'conn-status waiting'
       return
     }
     const latest = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]

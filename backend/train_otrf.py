@@ -1,9 +1,12 @@
 """
 Parse OTRF Security Datasets and retrain the Voidwatch classifier.
 
-Place downloaded ZIPs in:
+Place downloaded ZIPs/tar.gz in:
   backend/datasets/otrf/attack/   <- malicious (label = 1)
   backend/datasets/otrf/benign/   <- benign    (label = 0, optional)
+
+Subdirectories are scanned recursively, so you can keep the original
+OTRF folder structure (attack/defense_evasion/host/*.zip, etc.)
 
 Then run from the backend folder:
   python train_otrf.py
@@ -17,9 +20,11 @@ Both are combined with the existing synthetic baseline before retraining.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
+import tarfile
 import zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -38,9 +43,14 @@ ATTACK_DIR          = DATASETS_DIR / "attack"
 BENIGN_DIR          = DATASETS_DIR / "benign"
 MALICIOUS_THRESHOLD = 15   # minimum rule score to label as malicious
 
+# EventIDs treated as process-creation events
+_PROC_EIDS    = {1, 4688}
+# EventIDs treated as network-connection events
+_NET_EIDS     = {3, 5156}
+
 
 # ---------------------------------------------------------------------------
-# Event parsing helpers — handles both old (flat) and new (winlogbeat) format
+# Event parsing helpers — handles flat (Mordor) and winlogbeat formats
 # ---------------------------------------------------------------------------
 
 def _event_id(event: dict) -> int:
@@ -84,8 +94,16 @@ def _infer_signed(path: str) -> bool:
     ))
 
 
+def _parse_pid(s: str) -> int:
+    """Parse decimal or 0x-prefixed hex PID string (EventID 4688 uses hex)."""
+    s = s.strip()
+    if s.lower().startswith("0x"):
+        return int(s, 16)
+    return int(s)
+
+
 # ---------------------------------------------------------------------------
-# ZIP parsing
+# NDJSON / JSON array parser
 # ---------------------------------------------------------------------------
 
 def _parse_ndjson(data: bytes) -> list[dict]:
@@ -106,6 +124,20 @@ def _parse_ndjson(data: bytes) -> list[dict]:
     return events
 
 
+def _classify_event(event: dict) -> tuple[str, int]:
+    """Return ('proc'|'net'|'skip', event_id)."""
+    eid = _event_id(event)
+    if eid in _PROC_EIDS:
+        return "proc", eid
+    if eid in _NET_EIDS:
+        return "net", eid
+    return "skip", eid
+
+
+# ---------------------------------------------------------------------------
+# Archive parsers
+# ---------------------------------------------------------------------------
+
 def _parse_zip(zip_path: Path) -> tuple[list[dict], list[dict]]:
     """Return (process_events, network_events) from a ZIP."""
     proc, net = [], []
@@ -115,11 +147,34 @@ def _parse_zip(zip_path: Path) -> tuple[list[dict], list[dict]]:
                 continue
             raw = zf.read(name)
             for event in _parse_ndjson(raw):
-                eid = _event_id(event)
-                if eid == 1:
+                kind, _ = _classify_event(event)
+                if kind == "proc":
                     proc.append(event)
-                elif eid == 3:
+                elif kind == "net":
                     net.append(event)
+    return proc, net
+
+
+def _parse_targz(tgz_path: Path) -> tuple[list[dict], list[dict]]:
+    """Return (process_events, network_events) from a .tar.gz archive."""
+    proc, net = [], []
+    try:
+        with tarfile.open(tgz_path, "r:gz") as tf:
+            for member in tf.getmembers():
+                if not any(member.name.endswith(ext) for ext in (".json", ".ndjson", ".log")):
+                    continue
+                f = tf.extractfile(member)
+                if f is None:
+                    continue
+                raw = f.read()
+                for event in _parse_ndjson(raw):
+                    kind, _ = _classify_event(event)
+                    if kind == "proc":
+                        proc.append(event)
+                    elif kind == "net":
+                        net.append(event)
+    except Exception:
+        pass
     return proc, net
 
 
@@ -128,25 +183,42 @@ def _parse_plain(json_path: Path) -> tuple[list[dict], list[dict]]:
     proc, net = [], []
     raw = json_path.read_bytes()
     for event in _parse_ndjson(raw):
-        eid = _event_id(event)
-        if eid == 1:
+        kind, _ = _classify_event(event)
+        if kind == "proc":
             proc.append(event)
-        elif eid == 3:
+        elif kind == "net":
             net.append(event)
     return proc, net
 
 
+# ---------------------------------------------------------------------------
+# Network map builder — handles Sysmon EventID 3 and WFP EventID 5156
+# ---------------------------------------------------------------------------
+
 def _build_net_map(net_events: list[dict]) -> dict[int, dict]:
-    """Aggregate network events by PID."""
+    """Aggregate network events by PID. Handles EventID 3 and 5156."""
     nm: dict[int, dict] = defaultdict(lambda: {"ips": [], "ports": [], "protocols": []})
     for e in net_events:
+        eid = _event_id(e)
         try:
             pid = int(_field(e, "ProcessId", "process_id"))
         except (ValueError, TypeError):
             continue
-        ip    = _field(e, "DestinationIp",   "dst_ip",   "DestIp")
-        port  = _field(e, "DestinationPort",  "dst_port", "DestPort")
-        proto = _field(e, "Protocol",         "protocol")
+
+        if eid == 3:
+            # Sysmon network event — standard field names
+            ip    = _field(e, "DestinationIp", "dst_ip", "DestIp")
+            port  = _field(e, "DestinationPort", "dst_port")
+            proto = _field(e, "Protocol", "protocol")
+        elif eid == 5156:
+            # Windows Filtering Platform — different field names, numeric protocol
+            ip    = _field(e, "DestAddress")
+            port  = _field(e, "DestPort")
+            proto_num = _field(e, "Protocol")
+            proto = "tcp" if proto_num == "6" else "udp" if proto_num == "17" else proto_num
+        else:
+            continue
+
         if ip:
             nm[pid]["ips"].append(ip)
         if port:
@@ -159,16 +231,38 @@ def _build_net_map(net_events: list[dict]) -> dict[int, dict]:
     return dict(nm)
 
 
+# ---------------------------------------------------------------------------
+# Process event → ProcessData
+# Handles EventID 1 (Sysmon) and EventID 4688 (Windows Security)
+# ---------------------------------------------------------------------------
+
 def _to_process_data(event: dict, net_map: dict) -> ProcessData | None:
-    image  = _field(event, "Image",         "image")
-    cmd    = _field(event, "CommandLine",   "command_line")
-    parent = _field(event, "ParentImage",   "parent_image")
-    hashes = _field(event, "Hashes",        "hashes")
-    try:
-        pid  = int(_field(event, "ProcessId",       "process_id"))
-        ppid = int(_field(event, "ParentProcessId", "parent_process_id") or 0)
-    except (ValueError, TypeError):
-        return None
+    eid = _event_id(event)
+
+    if eid == 4688:
+        # Windows Security process creation — different field names, hex PIDs
+        image  = _field(event, "NewProcessName")
+        cmd    = _field(event, "CommandLine", "ProcessCommandLine")
+        parent = _field(event, "ParentProcessName")
+        hashes = ""
+        try:
+            pid  = _parse_pid(_field(event, "NewProcessId"))
+            # In 4688, ProcessId is the *creator* (parent) PID
+            ppid = _parse_pid(_field(event, "ProcessId") or "0")
+        except (ValueError, TypeError):
+            return None
+    else:
+        # EventID 1 (Sysmon) — standard flat or winlogbeat format
+        image  = _field(event, "Image",         "image")
+        cmd    = _field(event, "CommandLine",   "command_line")
+        parent = _field(event, "ParentImage",   "parent_image")
+        hashes = _field(event, "Hashes",        "hashes")
+        try:
+            pid  = int(_field(event, "ProcessId",       "process_id"))
+            ppid = int(_field(event, "ParentProcessId", "parent_process_id") or 0)
+        except (ValueError, TypeError):
+            return None
+
     if not image:
         return None
 
@@ -192,7 +286,7 @@ def _to_process_data(event: dict, net_map: dict) -> ProcessData | None:
 
 
 # ---------------------------------------------------------------------------
-# Feature extraction from a single ZIP
+# Feature extraction
 # ---------------------------------------------------------------------------
 
 def _features_from_events(
@@ -220,25 +314,34 @@ def _features_from_events(
 
 
 def _features_from_zip(zip_path: Path, fixed_label: int | None) -> tuple[list, list]:
-    proc_events, net_events = _parse_zip(zip_path)
-    return _features_from_events(proc_events, net_events, fixed_label)
+    return _features_from_events(*_parse_zip(zip_path), fixed_label)
+
+
+def _features_from_targz(tgz_path: Path, fixed_label: int | None) -> tuple[list, list]:
+    return _features_from_events(*_parse_targz(tgz_path), fixed_label)
 
 
 def _features_from_file(json_path: Path, fixed_label: int | None) -> tuple[list, list]:
-    proc_events, net_events = _parse_plain(json_path)
-    return _features_from_events(proc_events, net_events, fixed_label)
+    return _features_from_events(*_parse_plain(json_path), fixed_label)
 
+
+# ---------------------------------------------------------------------------
+# Folder loader — recursive scan, supports .zip / .tar.gz / plain JSON
+# ---------------------------------------------------------------------------
 
 def _load_folder(folder: Path, fixed_label: int | None) -> tuple[np.ndarray, np.ndarray]:
     if not folder.exists():
         return np.empty((0, 0)), np.empty(0, dtype=int)
 
-    zips = sorted(folder.glob("*.zip"))
+    # rglob — recurse into subdirectories (attack/defense_evasion/host/*.zip, etc.)
+    zips   = sorted(folder.rglob("*.zip"))
+    tarballs = sorted(folder.rglob("*.tar.gz"))
     plains = sorted(
-        p for ext in ("*.json", "*.ndjson", "*.log") for p in folder.glob(ext)
+        p for ext in ("*.json", "*.ndjson", "*.log")
+        for p in folder.rglob(ext)
     )
 
-    # names already covered by ZIPs — avoid double-counting
+    # avoid double-counting plain files already inside a ZIP
     zip_covered: set[str] = set()
     for zp in zips:
         try:
@@ -247,23 +350,36 @@ def _load_folder(folder: Path, fixed_label: int | None) -> tuple[np.ndarray, np.
         except Exception:
             pass
 
-    sources: list[Path] = zips + [p for p in plains if p.name not in zip_covered]
+    sources: list[tuple[str, Path]] = (
+        [("zip", p) for p in zips]
+        + [("tgz", p) for p in tarballs]
+        + [("plain", p) for p in plains if p.name not in zip_covered]
+    )
+
     if not sources:
         return np.empty((0, 0)), np.empty(0, dtype=int)
 
     X_all, y_all = [], []
-    for src in sources:
+    for kind, src in sources:
         print(f"  {src.name} … ", end="", flush=True)
-        if src.suffix == ".zip":
-            X, y = _features_from_zip(src, fixed_label)
-        else:
-            X, y = _features_from_file(src, fixed_label)
+        try:
+            if kind == "zip":
+                X, y = _features_from_zip(src, fixed_label)
+            elif kind == "tgz":
+                X, y = _features_from_targz(src, fixed_label)
+            else:
+                X, y = _features_from_file(src, fixed_label)
+        except Exception as exc:
+            print(f"ERROR: {exc}")
+            continue
         mal = sum(v == 1 for v in y)
         ben = sum(v == 0 for v in y)
         print(f"{mal} malicious  {ben} benign")
         X_all.extend(X)
         y_all.extend(y)
 
+    if not X_all:
+        return np.empty((0, 0)), np.empty(0, dtype=int)
     return np.array(X_all), np.array(y_all, dtype=int)
 
 
@@ -276,15 +392,12 @@ def main() -> None:
     print("  Voidwatch OTRF Trainer")
     print("=" * 52)
 
-    # ── OTRF attack datasets (auto-label) ──────────────────
     print(f"\nAttack datasets  ({ATTACK_DIR})")
     X_atk, y_atk = _load_folder(ATTACK_DIR, fixed_label=None)
 
-    # ── OTRF benign datasets (force label=0) ───────────────
     print(f"\nBenign datasets  ({BENIGN_DIR})")
     X_ben_otrf, y_ben_otrf = _load_folder(BENIGN_DIR, fixed_label=0)
 
-    # ── Synthetic baseline ─────────────────────────────────
     print("\nSynthetic baseline …", end=" ", flush=True)
     X_syn_mal = _malicious_samples()
     X_syn_ben = _benign_samples()
@@ -292,7 +405,6 @@ def main() -> None:
     y_syn_ben = np.zeros(len(X_syn_ben), dtype=int)
     print(f"{len(X_syn_mal)} malicious  {len(X_syn_ben)} benign")
 
-    # ── Combine ────────────────────────────────────────────
     parts_X = [X_syn_mal, X_syn_ben]
     parts_y = [y_syn_mal, y_syn_ben]
     if X_atk.size:
@@ -309,7 +421,6 @@ def main() -> None:
     ben_n = len(y) - mal_n
     print(f"\nCombined: {len(y)} samples  ({mal_n} malicious / {ben_n} benign)")
 
-    # ── Train ──────────────────────────────────────────────
     print("\nTraining RandomForest …")
     clf = ProcessClassifier()
     clf.train_on(X, y)
