@@ -17,7 +17,7 @@ export async function render(el) {
 
     const latestAgent = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
     const lastSeen    = latestAgent ? ago(latestAgent.last_seen) : '—'
-    const onlineCount = agents.filter(a => (Date.now() - parseUTC(a.last_seen)) < 30000).length
+    const onlineCount = agents.filter(a => (Date.now() - parseUTC(a.last_seen)) < 60000).length
 
     const dist = {}
     LEVELS.forEach(l => dist[l] = 0)
@@ -60,8 +60,8 @@ export async function render(el) {
           <div class="stat-value ${avgRisk >= 80 ? 'danger' : avgRisk >= 50 ? 'warn' : ''}">${avgRisk}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Last Seen</div>
-          <div class="stat-value" style="font-size:16px;padding-top:4px">${lastSeen}</div>
+          <div class="stat-label">Last Check</div>
+          <div class="stat-value" data-ts="${latestAgent?.last_seen ?? ''}" style="font-size:16px;padding-top:4px">${lastSeen}</div>
         </div>
       </div>
 

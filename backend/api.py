@@ -83,6 +83,7 @@ def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
     meta = payload.metadata.model_dump() if payload.metadata else None
 
     _upsert_agent(db, payload.agent_id, meta)
+    db.commit()  # persist last_seen immediately so dashboard reads current time
 
     for proc in payload.processes:
         db.add(ProcessRecord(

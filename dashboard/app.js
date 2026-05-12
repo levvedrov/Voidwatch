@@ -59,7 +59,7 @@ async function updateStatus() {
       return
     }
     const latest = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
-    const online = (Date.now() - parseUTC(latest.last_seen)) < 30000
+    const online = (Date.now() - parseUTC(latest.last_seen)) < 60000
     el.textContent = `${latest.hostname}  (${latest.username})  ${online ? 'Online' : 'Offline'}`
     el.className = 'conn-status ' + (online ? 'online' : 'offline')
   } catch {
@@ -75,3 +75,10 @@ setInterval(updateStatus, 10_000)
 setInterval(() => {
   if (parseHash() === 'dashboard') renderDashboard(content)
 }, 15_000)
+
+// Tick all data-ts elements every second so relative times stay current
+setInterval(() => {
+  document.querySelectorAll('[data-ts]').forEach(el => {
+    if (el.dataset.ts) el.textContent = ago(el.dataset.ts)
+  })
+}, 1000)
