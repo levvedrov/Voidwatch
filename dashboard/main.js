@@ -6,7 +6,12 @@ const ROOT = path.join(__dirname, '..')
 let win, backendProc, agentProc
 
 function spawnPython(script, cwd) {
-  return spawn('python', [script], { cwd, windowsHide: true, stdio: 'ignore' })
+  const proc = spawn('python', [script], { cwd, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+  proc.stderr?.on('data', d => {
+    const msg = d.toString().trim()
+    if (msg) console.error(`[${require('path').basename(script)}]`, msg)
+  })
+  return proc
 }
 
 function killProc(proc) {
@@ -49,7 +54,7 @@ ipcMain.on('win-close',    () => win?.close())
 
 app.whenReady().then(() => {
   startPython()
-  setTimeout(createWindow, 2500)
+  createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

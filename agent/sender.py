@@ -1,4 +1,5 @@
 import datetime
+import time
 
 import requests
 
@@ -33,15 +34,33 @@ def _serialize(events: list) -> dict:
     }
 
 
-def send_telemetry(events: list) -> bool:
+def register(metadata: dict) -> bool:
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         resp = requests.post(
-            f"{SERVER_URL}/telemetry",
-            json=_serialize(events),
+            f"{SERVER_URL}/register",
+            json={"agent_id": AGENT_ID, "metadata": metadata},
             headers=headers,
-            timeout=10,
+            timeout=5,
         )
-        return resp.status_code == 201
+        return resp.ok
     except requests.RequestException:
         return False
+
+
+def send_telemetry(events: list, retries: int = 2) -> bool:
+    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    payload = _serialize(events)
+    for attempt in range(retries):
+        try:
+            resp = requests.post(
+                f"{SERVER_URL}/telemetry",
+                json=payload,
+                headers=headers,
+                timeout=10,
+            )
+            return resp.status_code == 201
+        except requests.RequestException:
+            if attempt < retries - 1:
+                time.sleep(1)
+    return False

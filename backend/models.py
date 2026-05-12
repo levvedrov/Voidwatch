@@ -26,6 +26,11 @@ class ProcessData(BaseModel):
     protocols: list[str]
 
 
+class RegisterPayload(BaseModel):
+    agent_id: str
+    metadata: AgentMetadata
+
+
 class TelemetryPayload(BaseModel):
     agent_id: str
     timestamp: datetime

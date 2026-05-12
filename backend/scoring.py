@@ -7,6 +7,7 @@ Pipeline:
            → Correlation Engine → Confidence Engine → Explainability → Alert
 """
 from __future__ import annotations
+import re
 from datetime import datetime
 from models import ProcessData
 
@@ -161,7 +162,6 @@ def _base(proc: ProcessData) -> tuple[float, list[str], list[str]]:
         reasons.append(f"Connection to known suspicious port(s): {hit_ports}")
         mitre.append("T1071")
 
-    import re
     if re.match(r'^[a-z0-9]{6,12}\.exe$', name) and not proc.is_signed:
         score += 25
         reasons.append("High-entropy executable name — possibly randomly generated (C2 dropper pattern)")
@@ -378,8 +378,8 @@ def score_batch(agent_id: str, processes: list[ProcessData]) -> list[dict]:
     alerts = []
     for proc in processes:
         # rule engine first, then ML uses rule_score as a feature
-        base_reasons = _base(proc)[0]
-        ml_proba = classifier.predict_proba(proc, rule_score=base_reasons)
+        base_score = _base(proc)[0]
+        ml_proba = classifier.predict_proba(proc, rule_score=base_score)
 
         result = score_process(proc, processes, ml_proba=ml_proba)
 

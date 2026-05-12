@@ -3,10 +3,9 @@ import { api, MITRE_NAMES, scoreColor } from '../api.js'
 const LEVEL_ORDER = { SEVERE:5, CRITICAL:4, HIGH:3, MEDIUM:2, LOW:1 }
 
 export async function render(el) {
-  try {
-    const alerts = await api.alerts({ limit: 1000 })
+  const alerts = await api.alerts({ limit: 1000 })
 
-    const map = {}
+  const map = {}
     alerts.forEach(a => {
       ;(a.mitre || []).forEach(tech => {
         if (!map[tech]) map[tech] = { count: 0, maxScore: 0, maxLevel: 'LOW' }
@@ -49,8 +48,5 @@ export async function render(el) {
             </table>
           </div>`
       }
-    `
-  } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load: ${e.message}</div>`
-  }
+  `
 }
