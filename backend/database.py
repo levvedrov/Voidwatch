@@ -1,6 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, create_engine
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DATABASE_URL = "sqlite:///./voidwatch.db"
@@ -28,7 +32,7 @@ class ProcessRecord(Base):
 
     id               = Column(Integer, primary_key=True, index=True)
     agent_id         = Column(String, index=True)
-    timestamp        = Column(DateTime, default=datetime.utcnow)
+    timestamp        = Column(DateTime, default=_utcnow)
     name             = Column(String)
     parent_name      = Column(String)
     command_line     = Column(String)
@@ -50,7 +54,7 @@ class AlertRecord(Base):
 
     id               = Column(Integer, primary_key=True, index=True)
     agent_id         = Column(String, index=True)
-    timestamp        = Column(DateTime, default=datetime.utcnow)
+    timestamp        = Column(DateTime, default=_utcnow)
     pid              = Column(Integer)
     process_name     = Column(String)
     parent_name      = Column(String)
@@ -74,8 +78,8 @@ class AgentRecord(Base):
     os         = Column(String)
     ip         = Column(String)
     username   = Column(String)
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_seen  = Column(DateTime, default=datetime.utcnow)
+    first_seen = Column(DateTime, default=_utcnow)
+    last_seen  = Column(DateTime, default=_utcnow)
 
 
 def init_db():

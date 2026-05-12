@@ -1,4 +1,6 @@
 from datetime import datetime
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -74,6 +76,11 @@ class AlertOut(BaseModel):
     mitre: list[str]
     ml_score: float
     timeline: list[dict]
+
+
+class RetentionPayload(BaseModel):
+    process_retain_days: Optional[int] = None
+    alert_retain_days: Optional[int] = None
 
 
 class AgentOut(BaseModel):

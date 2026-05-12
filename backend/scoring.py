@@ -8,7 +8,7 @@ Pipeline:
 """
 from __future__ import annotations
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from models import ProcessData
 
 # ---------------------------------------------------------------------------
@@ -302,7 +302,7 @@ def _category(reasons: list[str], mitre: list[str]) -> str:
 # Event Timeline builder
 # ---------------------------------------------------------------------------
 def _timeline(proc: ProcessData, all_reasons: list[str]) -> list[dict]:
-    ts = datetime.utcnow().strftime("%H:%M:%S")
+    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
     events = [{"time": ts, "event": f"{proc.name} process observed", "priority": "HIGH"}]
 
     if proc.command_line.strip():

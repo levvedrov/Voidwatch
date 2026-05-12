@@ -1,193 +1,102 @@
-import { api, fmt, fmtDate, MITRE_NAMES, riskColor } from '../api.js'
+import { api, fmtDate, scoreColor, esc } from '../api.js'
 
-export async function render(el, params = {}) {
-  if (params.id) { return renderDetail(el, params.id) }
+const PAGE = 50
 
-  el.innerHTML = '<div class="loading">Loading alerts…</div>'
-  try {
-    const agents = await api.agents()
-    let alerts   = await api.alerts({ limit: 500 })
+export async function render(el) {
+  let page = 0
+  const filters = { risk_level: '', min_score: 0 }
 
-    el.innerHTML = `
-      <div class="page-title">Alerts <span class="sub">${alerts.length} total</span></div>
-
-      <div class="filters" id="alert-filters">
-        <input id="f-process" placeholder="Search process…" style="width:180px" />
-        <select id="f-level" style="width:130px">
+  el.innerHTML = `
+    <div class="toolbar">
+      <div class="page-title" style="margin-bottom:0">
+        Alerts <span class="sub" id="al-sub"></span>
+      </div>
+      <div class="toolbar-controls">
+        <select id="al-risk" class="toolbar-select">
           <option value="">All levels</option>
-          <option>LOW</option><option>MEDIUM</option><option>HIGH</option>
-          <option>CRITICAL</option><option>SEVERE</option>
+          <option value="LOW">Low</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="HIGH">High</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="SEVERE">Severe</option>
         </select>
-        <select id="f-agent" style="width:150px">
-          <option value="">All agents</option>
-          ${agents.map(a => `<option value="${a.agent_id}">${a.hostname}</option>`).join('')}
-        </select>
-        <input id="f-mitre" placeholder="MITRE (e.g. T1059)…" style="width:160px" />
-        <button class="btn btn-danger" id="f-reset">Clear</button>
+        <input id="al-score" class="toolbar-input" type="number" min="0"
+               placeholder="Min score" style="width:100px" />
       </div>
-
-      <div class="panel">
-        <div id="alerts-wrap" style="overflow-x:auto">
-          ${renderRows(alerts)}
-        </div>
-      </div>
-    `
-
-    function applyFilters() {
-      const level   = el.querySelector('#f-level').value
-      const agent   = el.querySelector('#f-agent').value
-      const process = el.querySelector('#f-process').value.toLowerCase()
-      const mitre   = el.querySelector('#f-mitre').value.toUpperCase()
-
-      let filtered = alerts
-      if (level)   filtered = filtered.filter(a => a.risk_level === level)
-      if (agent)   filtered = filtered.filter(a => a.agent_id === agent)
-      if (process) filtered = filtered.filter(a => a.process_name.toLowerCase().includes(process))
-      if (mitre)   filtered = filtered.filter(a => a.mitre.some(m => m.includes(mitre)))
-
-      el.querySelector('#alerts-wrap').innerHTML = renderRows(filtered)
-      bindRows()
-    }
-
-    ['#f-process', '#f-mitre'].forEach(id => {
-      el.querySelector(id).addEventListener('input', applyFilters)
-    })
-    ;['#f-level', '#f-agent'].forEach(id => {
-      el.querySelector(id).addEventListener('change', applyFilters)
-    })
-    el.querySelector('#f-reset').addEventListener('click', () => {
-      el.querySelectorAll('#alert-filters input, #alert-filters select').forEach(i => i.value = '')
-      el.querySelector('#alerts-wrap').innerHTML = renderRows(alerts)
-      bindRows()
-    })
-    bindRows()
-
-    function bindRows() {
-      el.querySelectorAll('tr[data-id]').forEach(row => {
-        row.addEventListener('click', () => {
-          window.location.hash = '#/alerts/' + row.dataset.id
-        })
-      })
-    }
-  } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load: ${e.message}</div>`
-  }
-}
-
-function renderRows(alerts) {
-  if (!alerts.length) return '<div class="empty">No alerts match filters</div>'
-  return `
-    <table class="data-table">
-      <thead><tr>
-        <th>Level</th>
-        <th>Process</th>
-        <th>Parent</th>
-        <th>Category</th>
-        <th>Score</th>
-        <th>ML</th>
-        <th>Confidence</th>
-        <th>Time</th>
-      </tr></thead>
-      <tbody>
-        ${alerts.map(a => `
-          <tr class="row-${a.risk_level} clickable" data-id="${a.id}">
-            <td><span class="badge badge-${a.risk_level}">${a.risk_level}</span></td>
-            <td class="process-name">${escHtml(a.process_name)}</td>
-            <td style="color:var(--text-muted)">${escHtml(a.parent_name || '—')}</td>
-            <td style="font-size:12px">${escHtml(a.category || '—')}</td>
-            <td style="font-weight:600;color:${riskColor(a.risk_level)}">${a.risk_score}</td>
-            <td style="font-family:var(--font-mono);font-size:12px;${a.ml_score >= .8 ? 'color:var(--crit)' : ''}">${Math.round(a.ml_score * 100)}%</td>
-            <td>
-              <span style="font-size:12px;color:var(--text-muted)">${a.confidence_label}</span>
-            </td>
-            <td style="font-size:12px;color:var(--text-muted);white-space:nowrap">${fmtDate(a.timestamp)}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
+    </div>
+    <div class="panel" id="al-panel"></div>
+    <div class="pagination" id="al-pag"></div>
   `
-}
 
-function escHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
-}
+  async function load() {
+    const panel = el.querySelector('#al-panel')
+    panel.innerHTML = '<div class="empty">Loading…</div>'
 
-async function renderDetail(el, id) {
-  el.innerHTML = '<div class="loading">Loading alert…</div>'
-  try {
-    const alerts = await api.alerts({ limit: 1000 })
-    const a = alerts.find(x => String(x.id) === String(id))
-    if (!a) { el.innerHTML = '<div class="empty">Alert not found</div>'; return }
+    const params = { limit: PAGE + 1, offset: page * PAGE }
+    if (filters.risk_level) params.risk_level = filters.risk_level
+    if (filters.min_score > 0) params.min_score = filters.min_score
 
-    el.innerHTML = `
-      <a class="back-btn clickable" href="#/alerts">← Back to Alerts</a>
+    try {
+      const items   = await api.alerts(params)
+      const hasNext = items.length > PAGE
+      const rows    = items.slice(0, PAGE)
 
-      <div class="detail-hero">
-        <div class="detail-level" style="color:${riskColor(a.risk_level)}">${a.risk_level} — ${a.category || 'Suspicious Behavior'}</div>
-        <div class="detail-title">${escHtml(a.process_name)}</div>
-        <div class="detail-stats">
-          <div class="detail-stat">
-            <div class="key">Risk Score</div>
-            <div class="val" style="color:${riskColor(a.risk_level)}">${a.risk_score}</div>
-          </div>
-          <div class="detail-stat">
-            <div class="key">Confidence</div>
-            <div class="val">${a.confidence_label} <span style="font-size:13px;color:var(--text-muted)">(${a.confidence})</span></div>
-          </div>
-          <div class="detail-stat">
-            <div class="key">ML Probability</div>
-            <div class="val">${Math.round(a.ml_score * 100)}%</div>
-          </div>
-        </div>
-      </div>
+      el.querySelector('#al-sub').textContent =
+        `page ${page + 1}${hasNext ? '+' : ''}, ${rows.length} shown`
 
-      <div class="detail-grid">
-        <div class="detail-section">
-          <div class="detail-section-title">Process Info</div>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            <div><div style="font-size:12px;color:var(--text-muted)">Process</div><div class="detail-value">${escHtml(a.process_name)}</div></div>
-            <div><div style="font-size:12px;color:var(--text-muted)">Parent</div><div class="detail-value">${escHtml(a.parent_name || '—')}</div></div>
-            <div><div style="font-size:12px;color:var(--text-muted)">PID</div><div class="detail-value">${a.pid}</div></div>
-            <div><div style="font-size:12px;color:var(--text-muted)">Agent</div><div class="detail-value">${escHtml(a.agent_id)}</div></div>
-            <div><div style="font-size:12px;color:var(--text-muted)">Timestamp</div><div class="detail-value">${fmtDate(a.timestamp)}</div></div>
-          </div>
-        </div>
+      panel.innerHTML = rows.length === 0
+        ? '<div class="empty">No alerts match the current filter</div>'
+        : `<table class="data-table">
+            <thead><tr>
+              <th style="width:16px"></th>
+              <th>Time</th>
+              <th>Process</th>
+              <th>Parent</th>
+              <th>Category</th>
+              <th>Score</th>
+              <th>ML</th>
+              <th>Reasons</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map(a => {
+                const ml      = Math.round(a.ml_score * 100)
+                const reasons = (a.reasons || []).slice(0, 2).join('; ')
+                return `
+                  <tr class="row-${a.risk_level}">
+                    <td><span class="risk-dot rdot-${a.risk_level}"></span></td>
+                    <td class="mono">${fmtDate(a.timestamp)}</td>
+                    <td class="proc-name">${esc(a.process_name)}</td>
+                    <td style="color:var(--text-muted)">${esc(a.parent_name || '—')}</td>
+                    <td style="font-size:12px;color:var(--text-muted)">${esc(a.category || '—')}</td>
+                    <td style="font-weight:700;color:${scoreColor(a.risk_score)}">${a.risk_score}</td>
+                    <td style="font-family:var(--font-mono);font-size:12px">${ml}%</td>
+                    <td style="font-size:11px;color:var(--text-muted);max-width:220px;
+                               overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                        title="${esc((a.reasons || []).join('; '))}">${esc(reasons)}</td>
+                  </tr>`
+              }).join('')}
+            </tbody>
+           </table>`
 
-        <div class="detail-section">
-          <div class="detail-section-title">Detection Reasons</div>
-          <ul class="detail-reasons">
-            ${(a.reasons || []).map(r => `<li>${escHtml(r)}</li>`).join('')}
-          </ul>
-        </div>
-
-        <div class="detail-section">
-          <div class="detail-section-title">MITRE ATT&CK</div>
-          <div class="mitre-list">
-            ${(a.mitre || []).map(m => `
-              <div class="mitre-item">
-                <span class="code">${m}</span>
-                <span class="name">${escHtml(MITRE_NAMES[m] ?? MITRE_NAMES[m.split('.')[0]] ?? 'Unknown Technique')}</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-
-        <div class="detail-section">
-          <div class="detail-section-title">Event Timeline</div>
-          <div class="timeline-wrap" style="padding:0">
-            <div class="timeline-list">
-              ${(a.timeline || []).map(e => `
-                <div class="tl-item p-${e.priority || 'LOW'}">
-                  <div class="tl-time">${e.time}</div>
-                  <div class="tl-event">${escHtml(e.event)}</div>
-                </div>
-              `).join('') || '<span style="color:var(--text-muted);font-size:12px">No timeline data</span>'}
-            </div>
-          </div>
-        </div>
-      </div>
-    `
-  } catch(e) {
-    el.innerHTML = `<div class="empty">Failed to load: ${e.message}</div>`
+      const pag = el.querySelector('#al-pag')
+      pag.innerHTML = `
+        <button class="pag-btn" id="pag-prev" ${page === 0 ? 'disabled' : ''}>&#8592; Prev</button>
+        <span class="pag-info">Page ${page + 1}</span>
+        <button class="pag-btn" id="pag-next" ${!hasNext ? 'disabled' : ''}>Next &#8594;</button>
+      `
+      pag.querySelector('#pag-prev').addEventListener('click', () => { page--; load() })
+      pag.querySelector('#pag-next').addEventListener('click', () => { page++; load() })
+    } catch (e) {
+      panel.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`
+    }
   }
+
+  el.querySelector('#al-risk').addEventListener('change', e => {
+    filters.risk_level = e.target.value; page = 0; load()
+  })
+  el.querySelector('#al-score').addEventListener('input', e => {
+    filters.min_score = parseInt(e.target.value) || 0; page = 0; load()
+  })
+
+  load()
 }

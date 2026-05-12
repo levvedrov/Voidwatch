@@ -45,7 +45,8 @@ def _signatures_many(paths: list) -> dict:
     )
     try:
         result = subprocess.run(
-            ['powershell', '-NoProfile', '-Command', script],
+            ['powershell', '-NoProfile', '-NonInteractive',
+             '-ExecutionPolicy', 'Bypass', '-Command', script],
             capture_output=True, text=True, timeout=30
         )
         raw = result.stdout.strip()

@@ -33,7 +33,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from classifier import ProcessClassifier, _benign_samples, _malicious_samples
+from classifier import ProcessClassifier, _benign_samples, _malicious_samples, _VER_FILE, _MODEL_VER
 from features import extract
 from models import ProcessData
 from scoring import _base
@@ -424,6 +424,8 @@ def main() -> None:
     print("\nTraining RandomForest …")
     clf = ProcessClassifier()
     clf.train_on(X, y)
+    with open(_VER_FILE, "w", encoding="utf-8") as f:
+        f.write(_MODEL_VER)
     print("\nModels saved. Restart the backend to load the new classifier.")
 
 

@@ -6,13 +6,33 @@ async function get(path) {
   return resp.json()
 }
 
+async function put(path, body) {
+  const resp = await fetch(BASE + path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  return resp.json()
+}
+
+async function post(path) {
+  const resp = await fetch(BASE + path, { method: 'POST' })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  return resp.json()
+}
+
 export const api = {
   base: BASE,
   async ping() { try { const r = await fetch(BASE + '/health'); return r.ok } catch { return false } },
-  alerts(params = {})    { return get('/alerts?'  + new URLSearchParams(params)) },
+  alerts(params = {})    { return get('/alerts?'   + new URLSearchParams(params)) },
   processes(params = {}) { return get('/processes?' + new URLSearchParams(params)) },
   agents()               { return get('/agents') },
   timeline(params = {})  { return get('/timeline?' + new URLSearchParams(params)) },
+  getSettings()          { return get('/settings') },
+  getStats()             { return get('/settings/stats') },
+  saveSettings(data)     { return put('/settings', data) },
+  pruneNow()             { return post('/settings/prune') },
 }
 
 export const MITRE_NAMES = {

@@ -16,8 +16,11 @@ from sklearn.metrics import classification_report, confusion_matrix
 
 from features import extract, FEATURE_NAMES
 
-MODEL_PATH  = os.path.join(os.path.dirname(__file__), "voidwatch_rf.joblib")
-SCALER_PATH = os.path.join(os.path.dirname(__file__), "voidwatch_scaler.joblib")
+_DIR         = os.path.dirname(__file__)
+MODEL_PATH   = os.path.join(_DIR, "voidwatch_rf.joblib")
+SCALER_PATH  = os.path.join(_DIR, "voidwatch_scaler.joblib")
+_VER_FILE    = os.path.join(_DIR, "voidwatch_model_ver.txt")
+_MODEL_VER   = "v3-otrf"   # bump this whenever training data or features change
 
 N_FEATURES = len(FEATURE_NAMES)
 RNG = np.random.default_rng(42)
@@ -184,10 +187,37 @@ class ProcessClassifier:
         self.scaler: StandardScaler | None = None
 
     def train(self) -> None:
-        X_mal = _malicious_samples()
-        X_ben = _benign_samples()
-        X = np.vstack([X_mal, X_ben])
-        y = np.array([1] * len(X_mal) + [0] * len(X_ben))
+        # train_otrf._load_folder() has the full OTRF parser (winlogbeat format,
+        # tar.gz, EventID 5156, SHA256, ambiguous-label filtering).
+        # Import locally so the module's sys.path.insert doesn't run at import time.
+        from train_otrf import ATTACK_DIR, BENIGN_DIR, _load_folder
+
+        X_syn_mal = _malicious_samples()
+        X_syn_ben = _benign_samples()
+        y_syn_mal = np.ones(len(X_syn_mal),  dtype=int)
+        y_syn_ben = np.zeros(len(X_syn_ben), dtype=int)
+
+        print("\n[classifier] Loading OTRF attack datasets …")
+        X_atk, y_atk = _load_folder(ATTACK_DIR, fixed_label=None)
+
+        print("[classifier] Loading OTRF benign datasets …")
+        X_ben_otrf, y_ben_otrf = _load_folder(BENIGN_DIR, fixed_label=0)
+
+        parts_X = [X_syn_mal, X_syn_ben]
+        parts_y = [y_syn_mal, y_syn_ben]
+        if X_atk.size:
+            parts_X.append(X_atk)
+            parts_y.append(y_atk)
+        if X_ben_otrf.size:
+            parts_X.append(X_ben_otrf)
+            parts_y.append(y_ben_otrf)
+
+        X = np.vstack(parts_X)
+        y = np.concatenate(parts_y)
+
+        mal_n = int(y.sum())
+        ben_n = len(y) - mal_n
+        print(f"[classifier] Total: {len(y)} samples ({mal_n} malicious / {ben_n} benign)")
         self.train_on(X, y)
 
     def train_on(self, X: np.ndarray, y: np.ndarray) -> None:
@@ -216,11 +246,19 @@ class ProcessClassifier:
         joblib.dump(self.scaler, SCALER_PATH)
 
     def load_or_train(self) -> None:
-        if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
+        stored_ver = ""
+        if os.path.exists(_VER_FILE):
+            with open(_VER_FILE, encoding="utf-8") as f:
+                stored_ver = f.read().strip()
+
+        if (os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH)
+                and stored_ver == _MODEL_VER):
             self.rf     = joblib.load(MODEL_PATH)
             self.scaler = joblib.load(SCALER_PATH)
         else:
             self.train()
+            with open(_VER_FILE, "w", encoding="utf-8") as f:
+                f.write(_MODEL_VER)
 
     def predict_proba(self, proc, rule_score: float = 0.0) -> float:
         if self.rf is None or self.scaler is None:
