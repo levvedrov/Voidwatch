@@ -11,7 +11,17 @@ venv/
 
 # ML model & database (generated at runtime)
 backend/voidwatch.db
+backend/voidwatch.db-wal
+backend/voidwatch.db-shm
 backend/model/
+*.joblib
+
+# Generated stats & graphs
+backend/stats/
+
+# Raw datasets (large files, use download instructions)
+backend/datasets/otrf/attack/
+tools/collector/data/
 
 # Agent ID (machine-specific)
 agent/.agent_id
@@ -22,6 +32,10 @@ dashboard/node_modules/
 # Electron build output
 dashboard/dist/
 dashboard/out/
+
+# Secrets
+.env
+*.env
 
 # OS
 .DS_Store

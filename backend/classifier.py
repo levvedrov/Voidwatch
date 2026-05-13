@@ -74,57 +74,101 @@ _F = {name: i for i, name in enumerate(FEATURE_NAMES)}
 def _malicious_samples() -> np.ndarray:
     blocks = []
 
-    # Office → PowerShell + encoded + network
+    # --- SIGNED LOLBINs (signed=1 but behaviorally malicious) ---
+
+    # PowerShell LOLBIN: signed, from system32, but encoded + EP bypass
     t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["has_encoded_cmd"]] = 1
-    t[_F["is_office_parent"]] = 1; t[_F["connection_count"]] = 5
+    t[_F["is_powershell"]] = 1; t[_F["is_signed"]] = 1; t[_F["from_system32"]] = 1
+    t[_F["has_encoded_cmd"]] = 1; t[_F["has_ep_bypass"]] = 1
+    blocks.append(_repeat(t, 150))
+
+    # PowerShell LOLBIN: signed, encoded + download + IEX
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["is_signed"]] = 1; t[_F["from_system32"]] = 1
+    t[_F["has_encoded_cmd"]] = 1; t[_F["has_download_cmd"]] = 1; t[_F["has_iex"]] = 1
+    blocks.append(_repeat(t, 130))
+
+    # PowerShell LOLBIN: signed + hidden window + network
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["is_signed"]] = 1; t[_F["from_system32"]] = 1
+    t[_F["has_hidden_window"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # mshta LOLBIN: signed + network
+    t = [0.0] * N_FEATURES
+    t[_F["is_mshta"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # certutil LOLBIN: signed + download
+    t = [0.0] * N_FEATURES
+    t[_F["is_certutil"]] = 1; t[_F["is_signed"]] = 1; t[_F["has_download_cmd"]] = 1
+    blocks.append(_repeat(t, 90))
+
+    # regsvr32 Squiblydoo: signed + network
+    t = [0.0] * N_FEATURES
+    t[_F["is_regsvr32"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 90))
+
+    # Office → signed LOLBIN child (PS/cmd spawned from Word/Excel)
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["is_signed"]] = 1
+    t[_F["is_office_parent"]] = 1; t[_F["connection_count"]] = 1
     blocks.append(_repeat(t, 120))
 
-    # PS + encoded + EP bypass + hidden
+    # Script host parent: signed child with network
+    t = [0.0] * N_FEATURES
+    t[_F["is_script_host_parent"]] = 1; t[_F["is_signed"]] = 1
+    t[_F["connection_count"]] = 1; t[_F["has_download_cmd"]] = 1
+    blocks.append(_repeat(t, 80))
+
+    # Signed binary + registry persistence
+    t = [0.0] * N_FEATURES
+    t[_F["is_signed"]] = 1; t[_F["has_registry_persist"]] = 1
+    blocks.append(_repeat(t, 80))
+
+    # Signed binary + scheduled task
+    t = [0.0] * N_FEATURES
+    t[_F["is_signed"]] = 1; t[_F["has_sched_task"]] = 1
+    blocks.append(_repeat(t, 70))
+
+    # --- UNSIGNED malicious ---
+
+    # Office → PowerShell + encoded + network (unsigned)
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["has_encoded_cmd"]] = 1
+    t[_F["is_office_parent"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 120))
+
+    # PS + encoded + EP bypass + hidden (unsigned)
     t = [0.0] * N_FEATURES
     t[_F["is_powershell"]] = 1; t[_F["has_encoded_cmd"]] = 1
     t[_F["has_ep_bypass"]] = 1; t[_F["has_hidden_window"]] = 1
     blocks.append(_repeat(t, 100))
 
-    # PS + download + IEX + network
+    # PS + download + IEX + network (unsigned)
     t = [0.0] * N_FEATURES
     t[_F["is_powershell"]] = 1; t[_F["has_download_cmd"]] = 1
-    t[_F["has_iex"]] = 1; t[_F["connection_count"]] = 3
+    t[_F["has_iex"]] = 1; t[_F["connection_count"]] = 1
     blocks.append(_repeat(t, 100))
-
-    # mshta + network
-    t = [0.0] * N_FEATURES
-    t[_F["is_mshta"]] = 1; t[_F["connection_count"]] = 2
-    blocks.append(_repeat(t, 80))
-
-    # certutil download
-    t = [0.0] * N_FEATURES
-    t[_F["is_certutil"]] = 1; t[_F["has_download_cmd"]] = 1
-    blocks.append(_repeat(t, 70))
-
-    # regsvr32 Squiblydoo
-    t = [0.0] * N_FEATURES
-    t[_F["is_regsvr32"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 70))
 
     # Unsigned + Temp + network
     t = [0.0] * N_FEATURES
-    t[_F["from_temp"]] = 1; t[_F["connection_count"]] = 4; t[_F["is_signed"]] = 0
+    t[_F["from_temp"]] = 1; t[_F["connection_count"]] = 1; t[_F["is_signed"]] = 0
     blocks.append(_repeat(t, 80))
 
-    # Registry persistence
+    # Registry persistence (unsigned)
     t = [0.0] * N_FEATURES
     t[_F["has_registry_persist"]] = 1
     blocks.append(_repeat(t, 70))
 
-    # Scheduled task
+    # Scheduled task (unsigned)
     t = [0.0] * N_FEATURES
     t[_F["has_sched_task"]] = 1
     blocks.append(_repeat(t, 60))
 
     # Downloads + unsigned + network
     t = [0.0] * N_FEATURES
-    t[_F["from_downloads"]] = 1; t[_F["connection_count"]] = 3
+    t[_F["from_downloads"]] = 1; t[_F["connection_count"]] = 1
     t[_F["has_suspicious_port"]] = 1
     blocks.append(_repeat(t, 80))
 
@@ -137,13 +181,13 @@ def _benign_samples() -> np.ndarray:
     # Chrome / browser
     t = [0.0] * N_FEATURES
     t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 8
+    t[_F["connection_count"]] = 1
     blocks.append(_repeat(t, 200))
 
     # svchost (System32, signed)
     t = [0.0] * N_FEATURES
     t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 2
+    t[_F["connection_count"]] = 1
     blocks.append(_repeat(t, 200))
 
     # explorer.exe
@@ -155,14 +199,49 @@ def _benign_samples() -> np.ndarray:
     # VS Code / IDE (Program Files, signed, some network)
     t = [0.0] * N_FEATURES
     t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 3
+    t[_F["connection_count"]] = 1
     blocks.append(_repeat(t, 150))
 
-    # PowerShell normal (signed, System32, no flags)
+    # PowerShell normal (signed, System32, no flags, no connections)
     t = [0.0] * N_FEATURES
     t[_F["is_powershell"]] = 1; t[_F["from_system32"]] = 1
     t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 0
+    blocks.append(_repeat(t, 150))
+
+    # PowerShell admin (signed, some connections, no flags) — remote PS, WinRM, etc.
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["from_system32"]] = 1
+    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 150))
+
+    # PowerShell admin — moderate connections, still no behavioral flags
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["from_system32"]] = 1
+    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
     blocks.append(_repeat(t, 120))
+
+    # Script host parent (cmd/PS spawning a benign child) — legitimate admin use
+    t = [0.0] * N_FEATURES
+    t[_F["is_script_host_parent"]] = 1; t[_F["is_signed"]] = 1
+    t[_F["from_system32"]] = 1; t[_F["connection_count"]] = 0
+    blocks.append(_repeat(t, 250))
+
+    # Script host parent spawning tool with 1 connection — common in admin scripts
+    t = [0.0] * N_FEATURES
+    t[_F["is_script_host_parent"]] = 1; t[_F["is_signed"]] = 1
+    t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 200))
+
+    # Script host parent spawning unsigned tool — common (python.exe, etc.)
+    t = [0.0] * N_FEATURES
+    t[_F["is_script_host_parent"]] = 1; t[_F["connection_count"]] = 0
+    blocks.append(_repeat(t, 150))
+
+    # Script host parent + moderate connections — no flags (automation scripts)
+    t = [0.0] * N_FEATURES
+    t[_F["is_script_host_parent"]] = 1; t[_F["is_signed"]] = 1
+    t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 150))
 
     # Notepad, calc, system utilities
     t = [0.0] * N_FEATURES
@@ -172,8 +251,48 @@ def _benign_samples() -> np.ndarray:
     # Teams / Slack / signed apps with network
     t = [0.0] * N_FEATURES
     t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 6
+    t[_F["connection_count"]] = 1
     blocks.append(_repeat(t, 130))
+
+    # Electron apps outside Program Files (Discord, Spotify, etc.) — signed, some connections
+    t = [0.0] * N_FEATURES
+    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 150))
+
+    # Electron apps — signed, low connections
+    t = [0.0] * N_FEATURES
+    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 120))
+
+    # Python/Node dev tools — unsigned, outside system dirs, low connections
+    t = [0.0] * N_FEATURES
+    t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 120))
+
+    # Python/Node dev tools — unsigned, moderate connections
+    t = [0.0] * N_FEATURES
+    t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # Python/Node dev tools — unsigned, higher connections
+    t = [0.0] * N_FEATURES
+    t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # Game launchers / user-installed apps (signed, AppData/local, network)
+    t = [0.0] * N_FEATURES
+    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 120))
+
+    # Signed updaters / background services — 1 connection
+    t = [0.0] * N_FEATURES
+    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # Unsigned background process — no connections (common for benign user procs)
+    t = [0.0] * N_FEATURES
+    t[_F["connection_count"]] = 0
+    blocks.append(_repeat(t, 150))
 
     return np.vstack(blocks)
 
@@ -404,10 +523,10 @@ class ProcessClassifier:
         X_s = self.scaler.fit_transform(X_train)
 
         self.rf = RandomForestClassifier(
-            n_estimators=150,
-            max_depth=12,
-            min_samples_leaf=3,
-            class_weight="balanced",
+            n_estimators=200,
+            max_depth=14,
+            min_samples_leaf=2,
+            class_weight={0: 1, 1: 1.5},
             random_state=42,
             n_jobs=-1,
         )
@@ -433,6 +552,20 @@ class ProcessClassifier:
         print(f"\n{header}")
         print(report_str)
         print(f"Confusion matrix:\n  TN={cm[0,0]}  FP={cm[0,1]}\n  FN={cm[1,0]}  TP={cm[1,1]}\n")
+
+        if has_test:
+            y_proba = self.rf.predict_proba(X_te_s)[:, 1]
+            print("── Threshold analysis (operational view) ─────────")
+            for thr in (0.50, 0.60, 0.70, 0.80, 0.90):
+                y_t = (y_proba >= thr).astype(int)
+                tp = int(((y_t == 1) & (eval_y_true == 1)).sum())
+                fp = int(((y_t == 1) & (eval_y_true == 0)).sum())
+                fn = int(((y_t == 0) & (eval_y_true == 1)).sum())
+                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                rec  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1   = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+                print(f"  thr={thr:.2f}  prec={prec:.3f}  rec={rec:.3f}  f1={f1:.3f}  TP={tp}  FP={fp}  FN={fn}")
+            print()
 
         os.makedirs(_MODEL_DIR, exist_ok=True)
         joblib.dump(self.rf,     MODEL_PATH)
@@ -460,9 +593,12 @@ class ProcessClassifier:
     def predict_proba(self, proc) -> float:
         if self.rf is None or self.scaler is None:
             return 0.0
-        vec   = np.array([extract(proc)])
-        vec_s = self.scaler.transform(vec)
-        return float(self.rf.predict_proba(vec_s)[0][1])
+        try:
+            vec   = np.array([extract(proc)])
+            vec_s = self.scaler.transform(vec)
+            return float(self.rf.predict_proba(vec_s)[0][1])
+        except Exception:
+            return 0.0
 
     def feature_importances(self) -> dict[str, float]:
         if self.rf is None:

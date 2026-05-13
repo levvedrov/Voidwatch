@@ -1,4 +1,3 @@
-import hashlib
 import json
 import subprocess
 from dataclasses import dataclass
@@ -32,19 +31,6 @@ class ProcessTelemetry:
     sha256: str
 
 
-def _sha256_many(paths: list) -> dict:
-    results = {}
-    for path in paths:
-        try:
-            h = hashlib.sha256()
-            with open(path, 'rb') as f:
-                for chunk in iter(lambda: f.read(65536), b''):
-                    h.update(chunk)
-            results[path] = h.hexdigest()
-        except OSError:
-            results[path] = ''
-    return results
-
 
 _SIG_BATCH = 25   # keep PowerShell command well under shell limits
 
@@ -59,7 +45,7 @@ def _signatures_batch(paths: list) -> dict:
         result = subprocess.run(
             ['powershell', '-NoProfile', '-NonInteractive',
              '-ExecutionPolicy', 'Bypass', '-Command', script],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, timeout=15
         )
         raw = result.stdout.strip()
         if not raw:
@@ -129,7 +115,6 @@ def collect_all() -> list:
 
     # --- pass 2: batch expensive IO on unique exe paths ---
     unique_paths = list({s[5] for s in snapshots if s[5]})
-    sha256_map   = _sha256_many(unique_paths)
     sig_map      = _signatures_many(unique_paths)
 
     # --- pass 3: resolve parent names and build results ---
@@ -148,6 +133,6 @@ def collect_all() -> list:
             cpu_usage=round(cpu, 2),
             mem_usage=mem,
             is_signed=_resolve_signed(name, path, sig_map),
-            sha256=sha256_map.get(path, ''),
+            sha256='',
         ))
     return results

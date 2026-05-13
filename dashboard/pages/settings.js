@@ -43,6 +43,26 @@ export async function render(el) {
         </div>
 
         <div class="panel">
+          <div class="panel-header">Authentication</div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
+            <div style="font-size:12px;color:var(--text-muted)">
+              Set if <code>VOIDWATCH_API_KEY</code> is enabled on the backend.
+            </div>
+            <div class="settings-row">
+              <div style="font-size:13px;color:var(--text)">API Key</div>
+              <input id="inp-apikey" class="toolbar-input" type="password"
+                     placeholder="leave blank if not set"
+                     value="${esc(localStorage.getItem('voidwatch_api_key') || '')}"
+                     style="width:180px" />
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <button class="action-btn" id="btn-savekey">Save Key</button>
+              <span id="msg-key" style="font-size:12px;color:var(--low);display:none">Saved</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
           <div class="panel-header">Database</div>
           <div style="padding:20px;display:flex;flex-direction:column;gap:10px">
             <div class="settings-stat-row">
@@ -66,6 +86,15 @@ export async function render(el) {
 
       </div>
     `
+
+    el.querySelector('#btn-savekey').addEventListener('click', () => {
+      const key = el.querySelector('#inp-apikey').value.trim()
+      if (key) localStorage.setItem('voidwatch_api_key', key)
+      else localStorage.removeItem('voidwatch_api_key')
+      const msg = el.querySelector('#msg-key')
+      msg.style.display = 'inline'
+      setTimeout(() => { msg.style.display = 'none' }, 2000)
+    })
 
     el.querySelector('#btn-save').addEventListener('click', async () => {
       const pd = parseInt(el.querySelector('#inp-proc').value)

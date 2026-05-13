@@ -26,7 +26,9 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Administrator\\\\Documents\\\\lev\" -Recurse -Directory)",
       "Bash(Select-Object -ExpandProperty FullName)",
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(Remove-Item \"c:\\\\GitHub\\\\backend\\\\model\\\\*\" -Force -ErrorAction SilentlyContinue)",
+      "Bash(Remove-Item \"c:\\\\GitHub\\\\backend\\\\stats\\\\training_history.csv\" -Force -ErrorAction SilentlyContinue)"
     ]
   }
 }

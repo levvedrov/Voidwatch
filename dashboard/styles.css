@@ -230,6 +230,8 @@ input, select { font: inherit; }
 .data-table tr.row-MEDIUM   td:first-child { border-left: 2px solid var(--med); }
 td.proc-name { color: var(--text); font-weight: 500; }
 td.mono      { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.data-table tr.clickable { cursor: pointer; }
+.data-table tr.clickable.open td { background: var(--card-hover); }
 
 /* ── Risk Distribution bars ───────────────────────────────── */
 .risk-dist { padding: 16px; }

@@ -1,7 +1,16 @@
 const BASE = (typeof __vw !== 'undefined') ? __vw.apiBase : 'http://localhost:8000'
 
+function _apiKey() {
+  try { return localStorage.getItem('voidwatch_api_key') || '' } catch { return '' }
+}
+
+function _headers(extra = {}) {
+  const key = _apiKey()
+  return key ? { ...extra, 'X-API-Key': key } : extra
+}
+
 async function get(path) {
-  const resp = await fetch(BASE + path)
+  const resp = await fetch(BASE + path, { headers: _headers() })
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
   return resp.json()
 }
@@ -9,7 +18,7 @@ async function get(path) {
 async function put(path, body) {
   const resp = await fetch(BASE + path, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: _headers({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   })
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -17,7 +26,7 @@ async function put(path, body) {
 }
 
 async function post(path) {
-  const resp = await fetch(BASE + path, { method: 'POST' })
+  const resp = await fetch(BASE + path, { method: 'POST', headers: _headers() })
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
   return resp.json()
 }

@@ -66,7 +66,7 @@ def extract(proc: ProcessData) -> list[float]:
         float(any(p in path for p in SYSTEM32_PATHS)),
         float(any(p in path for p in PROGFILES_PATHS)),
         float(proc.is_signed),
-        float(min(proc.connection_count, 20)),
+        float(proc.connection_count > 0),
         float(any(p in SUSPICIOUS_PORTS for p in proc.destination_ports)),
         float(any(k in cmd for k in ["reg add","currentversion\\run","currentversion\\runonce"])),
         float((name in {"schtasks.exe","at.exe"} and "/create" in cmd) or "new-scheduledtask" in cmd),

@@ -24,6 +24,15 @@ SUSPICIOUS_PATHS = TEMP_PATHS + ["\\downloads\\","\\appdata\\roaming\\","\\appda
 SUSPICIOUS_PORTS = {4444,1337,8888,9001,31337,6666,5555,2222}
 KNOWN_BAD_HASHES: set[str] = set()
 
+# Trusted process baselines — reduce severity unless strong behavioral evidence is present.
+# These processes can still be malicious when abused (e.g. encoded PowerShell, Office parent).
+DEFENDER_PROCS = {"msmpeng.exe","nissrv.exe","securityhealthservice.exe",
+                  "securityhealthhost.exe","mssense.exe","senseir.exe"}
+BROWSER_PROCS  = {"chrome.exe","msedge.exe","firefox.exe","brave.exe","opera.exe","iexplore.exe"}
+DEV_TOOL_PROCS = {"code.exe","python.exe","python3.exe","node.exe","npm.exe","electron.exe",
+                  "openconsole.exe","windowsterminal.exe","wt.exe","git.exe",
+                  "git-remote-https.exe","devenv.exe","rider64.exe"}
+
 ALERT_THRESHOLD = 25   # MEDIUM+
 
 RISK_LEVELS = [(120,"SEVERE"),(80,"CRITICAL"),(50,"HIGH"),(25,"MEDIUM"),(0,"LOW")]
@@ -163,9 +172,13 @@ def _base(proc: ProcessData) -> tuple[float, list[str], list[str]]:
         reasons.append(f"Connection to known suspicious port(s): {hit_ports}")
         mitre.append("T1071")
 
-    if re.match(r'^[a-z0-9]{6,12}\.exe$', name) and not proc.is_signed:
-        score += 25
-        reasons.append("High-entropy executable name — possibly randomly generated (C2 dropper pattern)")
+    # High-entropy name: only fire when ALSO running from a suspicious path AND has network
+    # (avoids false positives on python.exe, msedge.exe, chrome.exe, etc.)
+    if (re.match(r'^[a-z0-9]{8,12}\.exe$', name) and not proc.is_signed
+            and any(p in path for p in SUSPICIOUS_PATHS) and proc.connection_count > 0):
+        score += 30
+        reasons.append("Random-looking name from suspicious path with network — C2 dropper pattern")
+        mitre.append("T1036")
 
     return score, reasons, list(dict.fromkeys(mitre))
 
@@ -202,8 +215,10 @@ def _confidence(proc: ProcessData, reasons: list[str]) -> tuple[float, str]:
 # Part 3 — Context Modifier
 # ---------------------------------------------------------------------------
 def _context(proc: ProcessData) -> tuple[float, list[str]]:
+    name   = proc.name.lower()
     parent = proc.parent_name.lower()
     path   = proc.path.lower()
+    cmd    = proc.command_line.lower()
     notes: list[str] = []
     mod = 1.0
 
@@ -221,6 +236,23 @@ def _context(proc: ProcessData) -> tuple[float, list[str]]:
         mod *= 0.6; notes.append("Signed system binary in System32")
     elif proc.is_signed and any(p in path for p in PROGFILES_PATHS):
         mod *= 0.8; notes.append("Signed application in Program Files")
+
+    # Trusted process baseline — reduce score unless behavioral evidence present.
+    # Suppression is bypassed when: running from suspicious path, spawned by Office,
+    # or using encoded/download commands (process is being abused).
+    _has_strong_signal = (
+        any(p in path for p in SUSPICIOUS_PATHS)
+        or parent in OFFICE_APPS
+        or any(k in cmd for k in ["-enc", "-encodedcommand", "iex", "invoke-expression",
+                                   "downloadstring", "downloadfile"])
+    )
+    if not _has_strong_signal:
+        if name in DEFENDER_PROCS:
+            mod *= 0.2; notes.append(f"Microsoft Defender component — heavily suppressed")
+        elif name in BROWSER_PROCS:
+            mod *= 0.4; notes.append(f"Trusted browser — score reduced")
+        elif name in DEV_TOOL_PROCS:
+            mod *= 0.5; notes.append(f"Developer tool — score reduced")
 
     return round(mod, 3), notes
 
@@ -263,7 +295,8 @@ def _correlation(proc: ProcessData, all_procs: list[ProcessData]) -> tuple[float
         bonus += 20; reasons.append("Process spawned child executable from Temp directory")
         mitre.append("T1204")
 
-    _PROC_MANAGERS = {"svchost.exe", "explorer.exe", "services.exe", "lsass.exe", "csrss.exe", "wininit.exe"}
+    _PROC_MANAGERS = ({"svchost.exe","explorer.exe","services.exe","lsass.exe","csrss.exe","wininit.exe"}
+                      | BROWSER_PROCS | DEV_TOOL_PROCS)
     child_count = sum(1 for p in all_procs if p.parent_pid == proc.pid)
     if child_count >= 5 and name not in _PROC_MANAGERS:
         bonus += 25; reasons.append(f"Process spawned {child_count} child processes in scan window")

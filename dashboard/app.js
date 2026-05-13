@@ -91,7 +91,15 @@ async function startup() {
     return
   }
 
-  setBar('done', 'Connected')
+  setBar('loading', 'Waiting for agent...')
+  const agentReady = await poll(async () => {
+    const agents = await api.agents()
+    if (!agents.length) return false
+    const latest = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
+    return (Date.now() - parseUTC(latest.last_seen)) < 60_000
+  }, 25_000, 10_000)
+
+  setBar('done', agentReady ? 'Agent online' : 'No agent detected')
   await new Promise(r => setTimeout(r, 380))   // let green bar be visible
   content.style.opacity = '0'                  // fade loading screen out
   await new Promise(r => setTimeout(r, 140))   // wait for .content transition (0.12s)
@@ -112,6 +120,18 @@ window.addEventListener('load', async () => {
       if (el.dataset.ts) el.textContent = ago(el.dataset.ts)
     })
   }, 1000)
+
+  // Keep Last Check fresh without a full dashboard re-render
+  setInterval(async () => {
+    if (parseHash() !== 'dashboard') return
+    try {
+      const agents = await api.agents()
+      if (!agents.length) return
+      const latest = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
+      const el = document.querySelector('[data-ts]')
+      if (el && latest.last_seen) el.dataset.ts = latest.last_seen
+    } catch {}
+  }, 5_000)
 })
 
 // ── Status bar ───────────────────────────────────────────────

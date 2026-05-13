@@ -11,7 +11,7 @@ from sender import register, send_telemetry
 from telemetry import TelemetryEvent
 
 REFRESH_INTERVAL    = 5
-COLLECTION_TIMEOUT  = 20  # seconds; PS signature check can take up to 30s
+COLLECTION_TIMEOUT  = 90  # seconds; batched PS signature checks (25 paths each) add up
 
 _log_dir = Path.home() / ".voidwatch"
 _log_dir.mkdir(exist_ok=True)
@@ -47,18 +47,20 @@ if __name__ == "__main__":
     if not register(collect_metadata()):
         log.warning("Initial registration failed -will retry via telemetry")
     while True:
+        # Heartbeat first — updates last_seen immediately regardless of how long collection takes
+        send_telemetry([])
+
         future = _executor.submit(collect_events)
         try:
             events = future.result(timeout=COLLECTION_TIMEOUT)
         except FutureTimeout:
-            log.warning("Collection timed out after %ds -sending heartbeat", COLLECTION_TIMEOUT)
+            log.warning("Collection timed out after %ds", COLLECTION_TIMEOUT)
             events = []
         except Exception as exc:
             log.error("Collection failed: %s", exc)
             events = []
 
-        # Always send (even empty list keeps last_seen current on the backend)
-        if not send_telemetry(events):
+        if events and not send_telemetry(events):
             log.warning("Telemetry send failed -backend may be unreachable")
 
         time.sleep(REFRESH_INTERVAL)

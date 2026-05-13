@@ -48,6 +48,62 @@ _PROC_EIDS    = {1, 4688}
 # EventIDs treated as network-connection events
 _NET_EIDS     = {3, 5156}
 
+# Processes that typically appear as background noise in attack logs.
+# We skip them UNLESS they exhibit suspicious behavior — then they are real attack actors.
+_BACKGROUND_IN_ATTACK = frozenset({
+    "system", "registry", "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe",
+    "lsass.exe", "lsaiso.exe", "services.exe", "svchost.exe", "spoolsv.exe",
+    "explorer.exe", "taskhostw.exe", "taskhost.exe", "dwm.exe", "conhost.exe",
+    "fontdrvhost.exe", "sihost.exe", "ctfmon.exe", "runtimebroker.exe",
+    "searchindexer.exe", "searchhost.exe", "audiodg.exe",
+    "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe",
+    "msmpeng.exe", "nissrv.exe", "securityhealthservice.exe",
+})
+
+_OFFICE_APPS  = {"winword.exe", "excel.exe", "outlook.exe", "powerpnt.exe", "onenote.exe"}
+_SUSP_PATHS   = ("\\temp\\", "\\tmp\\", "\\appdata\\local\\temp\\",
+                  "\\downloads\\", "\\programdata\\")
+_LOLBINS      = {"mshta.exe", "regsvr32.exe", "rundll32.exe", "certutil.exe",
+                  "bitsadmin.exe", "wmic.exe", "cmstp.exe", "installutil.exe"}
+
+
+def _is_attack_related(proc) -> bool:
+    """Return True if a process shows direct attack behavior (command-line or structural)."""
+    name   = proc.name.lower()
+    cmd    = proc.command_line.lower()
+    path   = proc.path.lower()
+    parent = proc.parent_name.lower()
+
+    if any(k in cmd for k in ["-enc", "-encodedcommand", "frombase64string",
+                                "iex", "invoke-expression"]):
+        return True
+    if any(k in cmd for k in ["downloadstring", "downloadfile", "invoke-webrequest",
+                                "wget ", "curl ", "certutil", "bitsadmin", "mshta"]):
+        return True
+    if parent in _OFFICE_APPS and name in {"powershell.exe", "cmd.exe",
+                                            "wscript.exe", "cscript.exe", "mshta.exe"}:
+        return True
+    if any(k in cmd for k in ["reg add", "currentversion\\run", "schtasks",
+                                "new-scheduledtask", "startup"]):
+        return True
+    if any(k in cmd for k in ["ntdsutil", "vssadmin", "reg save",
+                                "whoami", "net user", "nltest", "mimikatz"]):
+        return True
+    if "-executionpolicy bypass" in cmd or "-ep bypass" in cmd:
+        return True
+    if name in _LOLBINS:
+        return True
+    # Unsigned binary executing from suspicious path
+    if not proc.is_signed and any(p in path for p in _SUSP_PATHS):
+        return True
+    # Unsigned binary with network connections outside trusted paths
+    if (proc.connection_count > 0 and not proc.is_signed and path
+            and not any(p in path for p in ("\\windows\\system32\\",
+                                             "\\windows\\syswow64\\",
+                                             "\\program files\\"))):
+        return True
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Event parsing helpers — handles flat (Mordor) and winlogbeat formats
@@ -298,6 +354,11 @@ def _features_from_events(
         proc = _to_process_data(e, net_map)
         if proc is None:
             continue
+        # In attack logs: skip background processes UNLESS they show attack behavior.
+        # A background process with suspicious command line / path / network IS an attack actor.
+        if fixed_label == 1 and proc.name.lower() in _BACKGROUND_IN_ATTACK:
+            if not _is_attack_related(proc):
+                continue
         X.append(extract(proc))
         y.append(fixed_label)
     return X, y

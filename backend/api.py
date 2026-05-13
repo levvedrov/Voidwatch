@@ -14,6 +14,12 @@ from scoring import score_batch
 from classifier import classifier
 import settings as _cfg
 
+def _safe_proba(proc) -> float:
+    try:
+        return classifier.predict_proba(proc)
+    except Exception:
+        return 0.0
+
 router = APIRouter()
 
 _API_KEY      = os.environ.get("VOIDWATCH_API_KEY", "")
@@ -118,7 +124,7 @@ def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
             destination_ips=json.dumps(proc.destination_ips),
             destination_ports=json.dumps(proc.destination_ports),
             protocols=json.dumps(proc.protocols),
-            ml_score=classifier.predict_proba(proc),
+            ml_score=_safe_proba(proc),
         ))
 
     alerts = score_batch(payload.agent_id, payload.processes)
