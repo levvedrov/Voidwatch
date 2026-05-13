@@ -11,6 +11,7 @@ from database import AgentRecord, AlertRecord, ProcessRecord, get_db
 from models import (AgentOut, AlertOut, ProcessOut, RegisterPayload,
                     RetentionPayload, TelemetryPayload)
 from scoring import score_batch
+from classifier import classifier
 import settings as _cfg
 
 router = APIRouter()
@@ -48,6 +49,7 @@ def _proc_to_out(r: ProcessRecord) -> ProcessOut:
         destination_ips=json.loads(r.destination_ips or "[]"),
         destination_ports=json.loads(r.destination_ports or "[]"),
         protocols=json.loads(r.protocols or "[]"),
+        ml_score=r.ml_score or 0.0,
     )
 
 
@@ -116,6 +118,7 @@ def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
             destination_ips=json.dumps(proc.destination_ips),
             destination_ports=json.dumps(proc.destination_ports),
             protocols=json.dumps(proc.protocols),
+            ml_score=classifier.predict_proba(proc),
         ))
 
     alerts = score_batch(payload.agent_id, payload.processes)

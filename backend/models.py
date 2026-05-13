@@ -58,6 +58,7 @@ class ProcessOut(BaseModel):
     destination_ips: list[str]
     destination_ports: list[int]
     protocols: list[str]
+    ml_score: float = 0.0
 
 
 class AlertOut(BaseModel):

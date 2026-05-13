@@ -1,22 +1,24 @@
 """
-Parse OTRF Security Datasets and retrain the Voidwatch classifier.
+Parse OTRF Security Datasets and retrain the Voidwatch behavioral classifier.
 
 Place downloaded ZIPs/tar.gz in:
-  backend/datasets/otrf/attack/   <- malicious (label = 1)
-  backend/datasets/otrf/benign/   <- benign    (label = 0, optional)
+  backend/datasets/otrf/attack/   <- malicious (label = 1, folder = ground truth)
+  backend/datasets/otrf/benign/   <- benign    (label = 0)
 
-Subdirectories are scanned recursively, so you can keep the original
+Subdirectories are scanned recursively so you can keep the original
 OTRF folder structure (attack/defense_evasion/host/*.zip, etc.)
 
-Then run from the backend folder:
-  python train_otrf.py
+Run from the backend folder:
+  python train.py
 
-Labeling strategy for attack datasets:
-  - Processes that trigger rule_score >= 15  -> label 1 (malicious)
-  - Processes with rule_score == 0           -> label 0 (benign background)
-  - Anything in between is discarded (ambiguous)
-Benign datasets: everything labelled 0.
-Both are combined with the existing synthetic baseline before retraining.
+Labeling strategy:
+  - Attack datasets: every process event labeled 1 — folder origin is ground truth,
+    no rule-engine filtering applied.
+  - Benign datasets: every process event labeled 0.
+  Both are combined with a synthetic baseline, then split at the scenario level
+  (80 % train / 20 % test) so the model is evaluated on scenarios it never saw.
+
+The classifier uses only behavioral features — rule_score_norm is NOT a feature.
 """
 from __future__ import annotations
 
@@ -36,12 +38,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 from classifier import ProcessClassifier, _benign_samples, _malicious_samples, _VER_FILE, _MODEL_VER
 from features import extract
 from models import ProcessData
-from scoring import _base
 
-DATASETS_DIR        = Path(__file__).parent / "datasets" / "otrf"
-ATTACK_DIR          = DATASETS_DIR / "attack"
-BENIGN_DIR          = DATASETS_DIR / "benign"
-MALICIOUS_THRESHOLD = 15   # minimum rule score to label as malicious
+DATASETS_DIR = Path(__file__).parent / "datasets" / "otrf"
+ATTACK_DIR   = DATASETS_DIR / "attack"
+BENIGN_DIR   = DATASETS_DIR / "benign"
 
 # EventIDs treated as process-creation events
 _PROC_EIDS    = {1, 4688}
@@ -290,7 +290,7 @@ def _to_process_data(event: dict, net_map: dict) -> ProcessData | None:
 # ---------------------------------------------------------------------------
 
 def _features_from_events(
-    proc_events: list[dict], net_events: list[dict], fixed_label: int | None
+    proc_events: list[dict], net_events: list[dict], fixed_label: int
 ) -> tuple[list, list]:
     net_map = _build_net_map(net_events)
     X, y = [], []
@@ -298,50 +298,38 @@ def _features_from_events(
         proc = _to_process_data(e, net_map)
         if proc is None:
             continue
-        rule_score = _base(proc)[0]
-        if fixed_label is None:
-            if rule_score >= MALICIOUS_THRESHOLD:
-                lbl = 1
-            elif rule_score == 0:
-                lbl = 0
-            else:
-                continue   # ambiguous — skip
-        else:
-            lbl = fixed_label
-        X.append(extract(proc, rule_score))
-        y.append(lbl)
+        X.append(extract(proc))
+        y.append(fixed_label)
     return X, y
 
 
-def _features_from_zip(zip_path: Path, fixed_label: int | None) -> tuple[list, list]:
+def _features_from_zip(zip_path: Path, fixed_label: int) -> tuple[list, list]:
     return _features_from_events(*_parse_zip(zip_path), fixed_label)
 
 
-def _features_from_targz(tgz_path: Path, fixed_label: int | None) -> tuple[list, list]:
+def _features_from_targz(tgz_path: Path, fixed_label: int) -> tuple[list, list]:
     return _features_from_events(*_parse_targz(tgz_path), fixed_label)
 
 
-def _features_from_file(json_path: Path, fixed_label: int | None) -> tuple[list, list]:
+def _features_from_file(json_path: Path, fixed_label: int) -> tuple[list, list]:
     return _features_from_events(*_parse_plain(json_path), fixed_label)
 
 
 # ---------------------------------------------------------------------------
-# Folder loader — recursive scan, supports .zip / .tar.gz / plain JSON
+# Folder loader — returns (X, y, scenario_ids) for scenario-level splitting
 # ---------------------------------------------------------------------------
 
-def _load_folder(folder: Path, fixed_label: int | None) -> tuple[np.ndarray, np.ndarray]:
+def _load_folder(folder: Path, fixed_label: int) -> tuple[np.ndarray, np.ndarray, list[str]]:
     if not folder.exists():
-        return np.empty((0, 0)), np.empty(0, dtype=int)
+        return np.empty((0, 0)), np.empty(0, dtype=int), []
 
-    # rglob — recurse into subdirectories (attack/defense_evasion/host/*.zip, etc.)
-    zips   = sorted(folder.rglob("*.zip"))
+    zips     = sorted(folder.rglob("*.zip"))
     tarballs = sorted(folder.rglob("*.tar.gz"))
-    plains = sorted(
+    plains   = sorted(
         p for ext in ("*.json", "*.ndjson", "*.log")
         for p in folder.rglob(ext)
     )
 
-    # avoid double-counting plain files already inside a ZIP
     zip_covered: set[str] = set()
     for zp in zips:
         try:
@@ -357,9 +345,9 @@ def _load_folder(folder: Path, fixed_label: int | None) -> tuple[np.ndarray, np.
     )
 
     if not sources:
-        return np.empty((0, 0)), np.empty(0, dtype=int)
+        return np.empty((0, 0)), np.empty(0, dtype=int), []
 
-    X_all, y_all = [], []
+    X_all, y_all, scen_all = [], [], []
     for kind, src in sources:
         print(f"  {src.name} … ", end="", flush=True)
         try:
@@ -375,12 +363,14 @@ def _load_folder(folder: Path, fixed_label: int | None) -> tuple[np.ndarray, np.
         mal = sum(v == 1 for v in y)
         ben = sum(v == 0 for v in y)
         print(f"{mal} malicious  {ben} benign")
+        scen_id = src.stem
         X_all.extend(X)
         y_all.extend(y)
+        scen_all.extend([scen_id] * len(y))
 
     if not X_all:
-        return np.empty((0, 0)), np.empty(0, dtype=int)
-    return np.array(X_all), np.array(y_all, dtype=int)
+        return np.empty((0, 0)), np.empty(0, dtype=int), []
+    return np.array(X_all), np.array(y_all, dtype=int), scen_all
 
 
 # ---------------------------------------------------------------------------
@@ -388,15 +378,17 @@ def _load_folder(folder: Path, fixed_label: int | None) -> tuple[np.ndarray, np.
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    print("=" * 52)
-    print("  Voidwatch OTRF Trainer")
-    print("=" * 52)
+    from sklearn.model_selection import GroupShuffleSplit
+
+    print("=" * 60)
+    print("  Voidwatch Trainer — behavioral RF, scenario-level eval")
+    print("=" * 60)
 
     print(f"\nAttack datasets  ({ATTACK_DIR})")
-    X_atk, y_atk = _load_folder(ATTACK_DIR, fixed_label=None)
+    X_atk, y_atk, scen_atk = _load_folder(ATTACK_DIR, fixed_label=1)
 
     print(f"\nBenign datasets  ({BENIGN_DIR})")
-    X_ben_otrf, y_ben_otrf = _load_folder(BENIGN_DIR, fixed_label=0)
+    X_ben_otrf, y_ben_otrf, scen_ben = _load_folder(BENIGN_DIR, fixed_label=0)
 
     print("\nSynthetic baseline …", end=" ", flush=True)
     X_syn_mal = _malicious_samples()
@@ -405,28 +397,53 @@ def main() -> None:
     y_syn_ben = np.zeros(len(X_syn_ben), dtype=int)
     print(f"{len(X_syn_mal)} malicious  {len(X_syn_ben)} benign")
 
-    parts_X = [X_syn_mal, X_syn_ben]
-    parts_y = [y_syn_mal, y_syn_ben]
+    X_test_parts: list[np.ndarray] = []
+    y_test_parts: list[np.ndarray] = []
+    test_scens:   list[str]        = []
+    X_train_parts = [X_syn_mal, X_syn_ben]
+    y_train_parts = [y_syn_mal, y_syn_ben]
+
+    def _scenario_split(X, y, scens, label_prefix=""):
+        unique = list(set(scens))
+        if len(unique) < 2:
+            X_train_parts.append(X); y_train_parts.append(y)
+            return
+        # ensure at least 1 scenario in test regardless of count
+        test_frac = max(1 / len(unique), 0.2)
+        gss = GroupShuffleSplit(n_splits=1, test_size=test_frac, random_state=42)
+        tr_idx, te_idx = next(gss.split(X, y, groups=scens))
+        X_test_parts.append(X[te_idx]); y_test_parts.append(y[te_idx])
+        test_scens.extend(label_prefix + scens[i] for i in te_idx)
+        X_train_parts.append(X[tr_idx]); y_train_parts.append(y[tr_idx])
+
+    n_atk_sc = len(set(scen_atk))  if X_atk.size     else 0
+    n_ben_sc = len(set(scen_ben))  if X_ben_otrf.size else 0
+    print(f"\n{n_atk_sc} attack scenarios, {n_ben_sc} benign scenarios loaded")
+
     if X_atk.size:
-        parts_X.append(X_atk)
-        parts_y.append(y_atk)
+        _scenario_split(X_atk, y_atk, scen_atk)
     if X_ben_otrf.size:
-        parts_X.append(X_ben_otrf)
-        parts_y.append(y_ben_otrf)
+        _scenario_split(X_ben_otrf, y_ben_otrf, scen_ben, label_prefix="ben_")
 
-    X = np.vstack(parts_X)
-    y = np.concatenate(parts_y)
+    X_test = np.vstack(X_test_parts)    if X_test_parts else None
+    y_test = np.concatenate(y_test_parts) if y_test_parts else None
 
-    mal_n = int(y.sum())
-    ben_n = len(y) - mal_n
-    print(f"\nCombined: {len(y)} samples  ({mal_n} malicious / {ben_n} benign)")
+    if X_test is not None:
+        print(f"Scenario split — train additions: {sum(len(x) for x in X_train_parts[2:])}  "
+              f"test: {len(X_test)} samples")
+        print(f"Test scenarios: {sorted(set(test_scens))}")
+
+    X = np.vstack(X_train_parts)
+    y = np.concatenate(y_train_parts)
+    mal_n = int(y.sum()); ben_n = len(y) - mal_n
+    print(f"\nTraining set: {len(y)} samples  ({mal_n} malicious / {ben_n} benign)")
 
     print("\nTraining RandomForest …")
     clf = ProcessClassifier()
-    clf.train_on(X, y)
+    clf.train_on(X, y, X_test, y_test, test_scens)
     with open(_VER_FILE, "w", encoding="utf-8") as f:
         f.write(_MODEL_VER)
-    print("\nModels saved. Restart the backend to load the new classifier.")
+    print("\nModel saved. Restart the backend to load the new classifier.")
 
 
 if __name__ == "__main__":

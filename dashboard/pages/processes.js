@@ -1,23 +1,12 @@
-import { api, scoreColor, esc } from '../api.js'
+import { api, mlColor, esc } from '../api.js'
 
 const PAGE = 50
 
 export async function render(el) {
-  const [procs, alerts] = await Promise.all([
-    api.processes({ limit: 1000 }),
-    api.alerts({ limit: 500 }),
-  ])
+  const procs = await api.processes({ limit: 1000 })
 
-  const riskByPid = {}
-  alerts.forEach(a => {
-    if (!riskByPid[a.pid] || a.risk_score > riskByPid[a.pid].risk_score)
-      riskByPid[a.pid] = a
-  })
-  const riskByName = {}
-  alerts.forEach(a => {
-    if (!riskByName[a.process_name] || a.risk_score > riskByName[a.process_name].risk_score)
-      riskByName[a.process_name] = a
-  })
+  // Sort highest ML first, then alphabetically
+  procs.sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0) || a.name.localeCompare(b.name))
 
   let visible = procs
   let page = 0
@@ -31,7 +20,7 @@ export async function render(el) {
         <input id="ps-search" class="toolbar-input" placeholder="Search…" />
         <select id="ps-filter" class="toolbar-select">
           <option value="">All</option>
-          <option value="risk">Has risk only</option>
+          <option value="risk">ML ≥ 40%</option>
           <option value="net">With connections</option>
           <option value="unsigned">Unsigned</option>
         </select>
@@ -43,14 +32,13 @@ export async function render(el) {
 
   function displayPage() {
     const start      = page * PAGE
-    const slice      = visible.slice(start, start + PAGE)
     const totalPages = Math.ceil(visible.length / PAGE)
 
     el.querySelector('#proc-count').textContent =
       `${visible.length} of ${procs.length}` +
       (totalPages > 1 ? ` — page ${page + 1}/${totalPages}` : '')
 
-    el.querySelector('#proc-list').innerHTML = buildRows(slice, riskByPid, riskByName)
+    el.querySelector('#proc-list').innerHTML = buildRows(visible.slice(start, start + PAGE))
 
     const pag = el.querySelector('#proc-pag')
     if (totalPages <= 1) { pag.innerHTML = ''; return }
@@ -66,14 +54,17 @@ export async function render(el) {
   function applyFilters() {
     const q    = el.querySelector('#ps-search').value.toLowerCase()
     const mode = el.querySelector('#ps-filter').value
-    visible = procs
-    if (q)              visible = visible.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      (p.parent_name || '').toLowerCase().includes(q) ||
-      (p.command_line || '').toLowerCase().includes(q))
-    if (mode === 'risk')     visible = visible.filter(p => riskByPid[p.pid] || riskByName[p.name])
-    if (mode === 'net')      visible = visible.filter(p => p.connection_count > 0)
-    if (mode === 'unsigned') visible = visible.filter(p => !p.is_signed)
+    visible = procs.filter(p => {
+      if (q && !(
+        p.name.toLowerCase().includes(q) ||
+        (p.parent_name  || '').toLowerCase().includes(q) ||
+        (p.command_line || '').toLowerCase().includes(q)
+      )) return false
+      if (mode === 'risk'    && (p.ml_score ?? 0) < 0.40) return false
+      if (mode === 'net'     && !p.connection_count)       return false
+      if (mode === 'unsigned' && p.is_signed)              return false
+      return true
+    })
     page = 0
     displayPage()
   }
@@ -83,22 +74,12 @@ export async function render(el) {
   displayPage()
 }
 
-function buildRows(procs, riskByPid, riskByName) {
+function buildRows(procs) {
   if (!procs.length) return '<div class="empty">No processes found</div>'
-
-  const sorted = [...procs].sort((a, b) => {
-    const sa = (riskByPid[a.pid] || riskByName[a.name])?.risk_score ?? 0
-    const sb = (riskByPid[b.pid] || riskByName[b.name])?.risk_score ?? 0
-    return sb - sa || a.name.localeCompare(b.name)
-  })
-
-  return sorted.map(p => {
-    const alert = riskByPid[p.pid] || riskByName[p.name]
-    const level = alert?.risk_level ?? ''
-    const score = alert?.risk_score ?? null
-    const border = level
-      ? { SEVERE:'#a855f7', CRITICAL:'#ef4444', HIGH:'#f97316', MEDIUM:'#eab308', LOW:'#22c55e' }[level]
-      : 'transparent'
+  return procs.map(p => {
+    const ml     = p.ml_score ?? 0
+    const mlPct  = Math.round(ml * 100)
+    const border = ml >= 0.80 ? '#ef4444' : ml >= 0.40 ? '#eab308' : 'transparent'
     return `
       <div class="proc-row" style="border-left:2px solid ${border}">
         <div class="proc-main">
@@ -115,8 +96,8 @@ function buildRows(procs, riskByPid, riskByName) {
           ${!p.is_signed
             ? `<span class="proc-stat" style="color:#ef4444">unsigned</span>`
             : ''}
-          ${score !== null
-            ? `<span class="proc-score" style="color:${scoreColor(score)}">${score}</span>`
+          ${mlPct > 0
+            ? `<span class="proc-score" style="color:${mlColor(mlPct)}">${mlPct}%</span>`
             : ''}
         </div>
       </div>`

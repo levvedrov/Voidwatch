@@ -1,7 +1,13 @@
-import { api, fmt, ago, scoreColor, mlColor, parseUTC } from '../api.js'
+import { api, ago, mlColor, parseUTC } from '../api.js'
 
-const LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'SEVERE']
 const HIGH_PLUS = new Set(['HIGH', 'CRITICAL', 'SEVERE'])
+
+// Map ml_score (0–1) to a CSS level token using the 3-band scheme
+function mlLevel(ml) {
+  if (ml >= 0.80) return 'CRITICAL'
+  if (ml >= 0.40) return 'MEDIUM'
+  return 'LOW'
+}
 
 export async function render(el) {
   try {
@@ -12,26 +18,38 @@ export async function render(el) {
 
     const today       = new Date().toDateString()
     const todayAlerts = alerts.filter(a => new Date(a.timestamp).toDateString() === today)
-    const severeCount = alerts.filter(a => HIGH_PLUS.has(a.risk_level)).length
-    const avgRisk     = alerts.length ? Math.round(alerts.reduce((s, a) => s + a.risk_score, 0) / alerts.length) : 0
+    const highMlCount = alerts.filter(a => (a.ml_score ?? 0) >= 0.80).length
+    const avgMl       = alerts.length
+      ? Math.round(alerts.reduce((s, a) => s + (a.ml_score ?? 0), 0) / alerts.length * 100)
+      : 0
 
     const latestAgent = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
     const lastSeen    = latestAgent ? ago(latestAgent.last_seen) : '—'
     const onlineCount = agents.filter(a => (Date.now() - parseUTC(a.last_seen)) < 60000).length
 
+    // ML score distribution — 3 bands
+    const ML_BANDS = [
+      { level: 'LOW',      label: 'Benign', min: 0.00, max: 0.40 },
+      { level: 'MEDIUM',   label: 'Medium', min: 0.40, max: 0.80 },
+      { level: 'CRITICAL', label: 'High',   min: 0.80, max: 1.01 },
+    ]
     const dist = {}
-    LEVELS.forEach(l => dist[l] = 0)
-    alerts.forEach(a => { dist[a.risk_level] = (dist[a.risk_level] ?? 0) + 1 })
+    ML_BANDS.forEach(b => dist[b.level] = 0)
+    alerts.forEach(a => {
+      const ml   = a.ml_score ?? 0
+      const band = ML_BANDS.find(b => ml >= b.min && ml < b.max) ?? ML_BANDS[0]
+      dist[band.level]++
+    })
     const maxDist = Math.max(...Object.values(dist), 1)
 
-    // HIGH+ alerts deduplicated by process name, highest score wins
+    // Suspicious processes: ml_score >= 0.40, deduplicated by process name, highest ml wins
     const highMap = {}
-    alerts.filter(a => HIGH_PLUS.has(a.risk_level)).forEach(a => {
-      if (!highMap[a.process_name] || a.risk_score > highMap[a.process_name].risk_score)
+    alerts.filter(a => (a.ml_score ?? 0) >= 0.40).forEach(a => {
+      if (!highMap[a.process_name] || (a.ml_score ?? 0) > (highMap[a.process_name].ml_score ?? 0))
         highMap[a.process_name] = a
     })
     const highAlerts = Object.values(highMap)
-      .sort((a, b) => b.risk_score - a.risk_score)
+      .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))
       .slice(0, 12)
 
     el.innerHTML = `
@@ -52,12 +70,12 @@ export async function render(el) {
           <div class="stat-value">${alerts.length}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">High or above</div>
-          <div class="stat-value ${severeCount > 0 ? 'danger' : ''}">${severeCount}</div>
+          <div class="stat-label">High ML (80%+)</div>
+          <div class="stat-value ${highMlCount > 0 ? 'danger' : ''}">${highMlCount}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Avg Risk Score</div>
-          <div class="stat-value ${avgRisk >= 80 ? 'danger' : avgRisk >= 50 ? 'warn' : ''}">${avgRisk}</div>
+          <div class="stat-label">Avg ML Score</div>
+          <div class="stat-value ${avgMl >= 80 ? 'danger' : avgMl >= 40 ? 'warn' : ''}">${avgMl}%</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Last Check</div>
@@ -68,7 +86,7 @@ export async function render(el) {
       <div class="split">
         <div class="panel">
           <div class="panel-header">
-            High+ Risk Processes
+            Suspicious Processes
             <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${highAlerts.length} unique</span>
           </div>
           ${highAlerts.length ? `
@@ -78,38 +96,37 @@ export async function render(el) {
                 <th>Process</th>
                 <th>Parent</th>
                 <th>Category</th>
-                <th>Score</th>
                 <th>ML</th>
               </tr></thead>
               <tbody>
                 ${highAlerts.map(a => {
-                  const ml = Math.round(a.ml_score * 100)
+                  const ml  = Math.round((a.ml_score ?? 0) * 100)
+                  const lvl = mlLevel(a.ml_score ?? 0)
                   return `
-                    <tr class="row-${a.risk_level}">
-                      <td><span class="risk-dot rdot-${a.risk_level}"></span></td>
+                    <tr class="row-${lvl}">
+                      <td><span class="risk-dot rdot-${lvl}"></span></td>
                       <td class="proc-name">${esc(a.process_name)}</td>
                       <td style="color:var(--text-muted)">${esc(a.parent_name || '—')}</td>
                       <td style="font-size:12px;color:var(--text-muted)">${esc(a.category || '—')}</td>
-                      <td style="font-weight:700;color:${scoreColor(a.risk_score)}">${a.risk_score}</td>
-                      <td style="font-family:var(--font-mono);font-size:12px;color:${mlColor(ml)}">${ml}%</td>
+                      <td style="font-family:var(--font-mono);font-weight:700;color:${mlColor(ml)}">${ml}%</td>
                     </tr>
                   `
                 }).join('')}
               </tbody>
             </table>
-          ` : '<div class="empty" style="padding:32px">No high-risk processes detected</div>'}
+          ` : '<div class="empty" style="padding:32px">No suspicious processes detected</div>'}
         </div>
 
         <div class="panel">
-          <div class="panel-header">Risk Distribution</div>
+          <div class="panel-header">ML Score Distribution</div>
           <div class="risk-dist">
-            ${LEVELS.map(l => `
+            ${ML_BANDS.map(b => `
               <div class="risk-row">
-                <span class="risk-label">${l.charAt(0) + l.slice(1).toLowerCase()}</span>
+                <span class="risk-label" title="${Math.round(b.min*100)}–${Math.round(Math.min(b.max,1)*100)}%">${b.label}</span>
                 <div class="risk-bar-wrap">
-                  <div class="risk-bar rbar-${l}" style="width:${Math.round((dist[l] / maxDist) * 100)}%"></div>
+                  <div class="risk-bar rbar-${b.level}" style="width:${Math.round((dist[b.level] / maxDist) * 100)}%"></div>
                 </div>
-                <span class="risk-count">${dist[l]}</span>
+                <span class="risk-count">${dist[b.level]}</span>
               </div>
             `).join('')}
           </div>

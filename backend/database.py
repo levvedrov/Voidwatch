@@ -47,6 +47,7 @@ class ProcessRecord(Base):
     destination_ips   = Column(String)  # JSON
     destination_ports = Column(String)  # JSON
     protocols         = Column(String)  # JSON
+    ml_score          = Column(Float, default=0.0)
 
 
 class AlertRecord(Base):

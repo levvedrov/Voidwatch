@@ -12,6 +12,13 @@ from classifier import classifier
 from database import AlertRecord, ProcessRecord, SessionLocal, init_db
 import settings as _cfg
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
 _PRUNE_INTERVAL = 3600  # seconds between prune passes
 
 
@@ -50,14 +57,20 @@ def _pruner():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log.info("Voidwatch backend starting")
     init_db()
-    classifier.load_or_train()
+    log.info("Database initialised")
+    classifier.load()
+    if classifier.rf is not None:
+        log.info("Model loaded")
     threading.Thread(target=_pruner, daemon=True, name="db-pruner").start()
+    log.info("Listening on http://127.0.0.1:8000")
     yield
+    log.info("Backend shutting down")
 
 
 app = FastAPI(title="Voidwatch Backend", version="0.2.0", lifespan=lifespan)
 app.include_router(router)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False, log_level="critical")
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False, log_level="warning")

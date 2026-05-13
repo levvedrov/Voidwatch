@@ -147,11 +147,12 @@ def _base(proc: ProcessData) -> tuple[float, list[str], list[str]]:
         reasons.append("Executable launched from AppData\\Roaming — unusual execution path")
         mitre.append("T1036")
 
-    if not proc.is_signed and path:
+    _trusted_path = path and any(p in path for p in SYSTEM32_PATHS + PROGFILES_PATHS)
+    if not proc.is_signed and path and not _trusted_path:
         score += 25
         reasons.append("Unsigned executable — no code signing certificate")
 
-    if not proc.is_signed and proc.connection_count > 0:
+    if not proc.is_signed and path and not _trusted_path and proc.connection_count > 0:
         score += 25
         reasons.append("Unsigned process with active network connections")
         mitre.append("T1071")
@@ -242,10 +243,6 @@ def _correlation(proc: ProcessData, all_procs: list[ProcessData]) -> tuple[float
     from_temp    = any(p in path for p in TEMP_PATHS)
     office_par   = parent in OFFICE_APPS
 
-    if has_network:
-        bonus += 20; reasons.append("Process creation with active network connection")
-        mitre.append("T1071")
-
     if name == "powershell.exe" and has_network and has_encoded:
         bonus += 35; reasons.append("Behavioral chain: PowerShell + encoded command + network activity")
         mitre += ["T1059.001","T1105"]
@@ -266,8 +263,9 @@ def _correlation(proc: ProcessData, all_procs: list[ProcessData]) -> tuple[float
         bonus += 20; reasons.append("Process spawned child executable from Temp directory")
         mitre.append("T1204")
 
+    _PROC_MANAGERS = {"svchost.exe", "explorer.exe", "services.exe", "lsass.exe", "csrss.exe", "wininit.exe"}
     child_count = sum(1 for p in all_procs if p.parent_pid == proc.pid)
-    if child_count >= 3:
+    if child_count >= 5 and name not in _PROC_MANAGERS:
         bonus += 25; reasons.append(f"Process spawned {child_count} child processes in scan window")
         mitre.append("T1059")
 
@@ -333,13 +331,10 @@ def score_process(proc: ProcessData, all_procs: list[ProcessData], ml_proba: flo
     ctx_mod,    ctx_notes                = _context(proc)
     corr_bonus, corr_reasons, corr_mitre = _correlation(proc, all_procs)
 
-    # ML boosts confidence slightly when it strongly agrees
-    if ml_proba >= 0.85:
-        conf_mod = min(conf_mod * 1.1, 1.4)
-    elif ml_proba <= 0.15 and conf_mod < 1.0:
-        conf_mod = max(conf_mod * 0.9, 0.4)
-
-    raw      = base_score + corr_bonus
+    # ML additive contribution: (proba - 0.45) × 50
+    #   proba=0.95 → +25, proba=0.70 → +12, proba=0.45 → 0, proba=0.20 → -12
+    ml_addon = round((ml_proba - 0.45) * 50)
+    raw      = max(0.0, base_score + corr_bonus + ml_addon)
     adjusted = raw * conf_mod * ctx_mod
     final    = min(round(adjusted), 150)
     level    = _risk_level(final)
@@ -347,6 +342,10 @@ def score_process(proc: ProcessData, all_procs: list[ProcessData], ml_proba: flo
     all_reasons = base_reasons + corr_reasons + ctx_notes
     if conf_note:
         all_reasons.append(conf_note)
+    if ml_proba >= 0.70:
+        all_reasons.append(f"ML classifier: high malicious probability ({ml_proba:.0%})")
+    elif ml_proba <= 0.20:
+        all_reasons.append(f"ML classifier: low malicious probability ({ml_proba:.0%}) — likely benign")
 
     all_mitre = list(dict.fromkeys(base_mitre + corr_mitre))
     category  = _category(all_reasons, all_mitre)
@@ -379,7 +378,7 @@ def score_batch(agent_id: str, processes: list[ProcessData]) -> list[dict]:
     for proc in processes:
         # rule engine first, then ML uses rule_score as a feature
         base_score = _base(proc)[0]
-        ml_proba = classifier.predict_proba(proc, rule_score=base_score)
+        ml_proba = classifier.predict_proba(proc)
 
         result = score_process(proc, processes, ml_proba=ml_proba)
 

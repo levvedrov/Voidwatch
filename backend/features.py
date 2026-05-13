@@ -37,11 +37,10 @@ FEATURE_NAMES = [
     "has_suspicious_port",
     "has_registry_persist",
     "has_sched_task",
-    "rule_score_norm",
 ]
 
 
-def extract(proc: ProcessData, rule_score: float = 0.0) -> list[float]:
+def extract(proc: ProcessData) -> list[float]:
     name   = proc.name.lower()
     cmd    = proc.command_line.lower()
     path   = proc.path.lower()
@@ -71,5 +70,4 @@ def extract(proc: ProcessData, rule_score: float = 0.0) -> list[float]:
         float(any(p in SUSPICIOUS_PORTS for p in proc.destination_ports)),
         float(any(k in cmd for k in ["reg add","currentversion\\run","currentversion\\runonce"])),
         float((name in {"schtasks.exe","at.exe"} and "/create" in cmd) or "new-scheduledtask" in cmd),
-        round(min(rule_score / 150.0, 1.0), 4),
     ]

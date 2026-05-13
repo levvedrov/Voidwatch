@@ -1,0 +1,3 @@
+session,timestamp,n_train,n_train_mal,n_train_ben,n_test,n_test_mal,n_test_ben,n_test_scenarios,is_scenario_eval,precision_mal,recall_mal,f1_mal,precision_ben,recall_ben,f1_ben,accuracy,tn,fp,fn,tp
+1,2026-05-13 17:07:43,4800,3484,1316,292,292,0,21,1,1.0,0.9349,0.9664,0.0,0.0,0.0,0.9349,0,0,19,273
+2,2026-05-13 17:09:56,5253,3484,1769,496,292,204,22,1,0.683,0.9521,0.7954,0.8427,0.3676,0.5119,0.7117,75,129,14,278

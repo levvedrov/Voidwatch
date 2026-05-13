@@ -11,8 +11,7 @@ venv/
 
 # ML model & database (generated at runtime)
 backend/voidwatch.db
-backend/voidwatch_rf.joblib
-backend/voidwatch_scaler.joblib
+backend/model/
 
 # Agent ID (machine-specific)
 agent/.agent_id

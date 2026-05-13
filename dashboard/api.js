@@ -70,8 +70,7 @@ export function scoreColor(score) {
 
 export function mlColor(pct) {
   if (pct >= 80) return '#ef4444'
-  if (pct >= 60) return '#f97316'
-  if (pct >= 30) return '#eab308'
+  if (pct >= 40) return '#eab308'
   return '#22c55e'
 }
 
