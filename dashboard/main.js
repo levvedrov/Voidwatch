@@ -1,14 +1,51 @@
 const { app, BrowserWindow, ipcMain } = require('electron')
 const path   = require('path')
 const http   = require('http')
+const https  = require('https')
+const fs     = require('fs')
 const { spawn, execFileSync } = require('child_process')
 
-const ROOT = path.join(__dirname, '..')
-let win, backendProc, agentProc
-let _stopping = false          // set true during shutdown to suppress restarts
-let _agentRestartDelay = 3000  // ms; doubles on each crash, resets after stable run
+const ROOT        = path.join(__dirname, '..')
+const CONFIG_PATH = path.join(app.getPath('userData'), 'voidwatch-config.json')
 
-// ── Python detection ─────────────────────────────────────
+let win, agentProc
+let _stopping          = false
+let _agentRestartDelay = 3000
+
+// ── Config persistence ────────────────────────────────────
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) }
+  catch { return { serverUrl: 'http://localhost:8000', apiKey: '' } }
+}
+
+function saveConfig(data) {
+  const cfg = { ...loadConfig(), ...data }
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
+  return cfg
+}
+
+// ── IPC handlers ──────────────────────────────────────────
+ipcMain.handle('config:get',  ()      => loadConfig())
+ipcMain.handle('config:set',  (_, d)  => saveConfig(d))
+ipcMain.handle('config:check-server', async (_, url) => {
+  return new Promise(resolve => {
+    const mod = (url || '').startsWith('https') ? https : http
+    try {
+      mod.get(url + '/health', { timeout: 5000 }, res => {
+        let body = ''
+        res.on('data', d => body += d)
+        res.on('end', () => {
+          try { resolve({ ok: res.statusCode === 200, data: JSON.parse(body) }) }
+          catch { resolve({ ok: res.statusCode === 200 }) }
+        })
+      }).on('error', err => resolve({ ok: false, error: err.message }))
+    } catch (err) {
+      resolve({ ok: false, error: err.message })
+    }
+  })
+})
+
+// ── Python detection ──────────────────────────────────────
 function findPython() {
   for (const cmd of ['python', 'py', 'python3']) {
     try {
@@ -21,72 +58,59 @@ function findPython() {
 
 const PYTHON = findPython()
 
-function spawnPython(script, cwd) {
-  if (!PYTHON) {
-    console.error('[main] Python not found — install Python 3.9+ and add it to PATH')
-    return null
-  }
-  const proc = spawn(PYTHON, [script], { cwd, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
-  proc.stderr?.on('data', d => {
-    const msg = d.toString().trim()
-    if (msg) console.error(`[${path.basename(script)}]`, msg)
-  })
-  return proc
-}
-
-// ── Backend health poll ───────────────────────────────────
-function waitForBackend(timeoutMs = 40000, intervalMs = 500) {
-  return new Promise(resolve => {
-    const deadline = Date.now() + timeoutMs
-    function check() {
-      http.get('http://127.0.0.1:8000/health', res => {
-        if (res.statusCode === 200) return resolve(true)
-        retry()
-      }).on('error', retry)
-      function retry() {
-        if (Date.now() < deadline) setTimeout(check, intervalMs)
-        else resolve(false)
-      }
-    }
-    check()
-  })
-}
-
-// ── Process management ───────────────────────────────────
+// ── Process management ────────────────────────────────────
 function killProc(proc) {
   if (!proc) return
   try { spawn('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { windowsHide: true }) }
   catch { proc.kill() }
 }
 
-function spawnAgent() {
-  const proc = spawnPython(path.join(ROOT, 'agent', 'main.py'), path.join(ROOT, 'agent'))
-  if (!proc) return null
+function spawnAgent(serverUrl, apiKey) {
+  if (!PYTHON) {
+    console.error('[main] Python not found — install Python 3.9+ and add it to PATH')
+    return null
+  }
+  const env = {
+    ...process.env,
+    VOIDWATCH_SERVER_URL: serverUrl || 'http://localhost:8000',
+    VOIDWATCH_API_KEY:    apiKey    || '',
+  }
+  const proc = spawn(PYTHON, [path.join(ROOT, 'agent', 'main.py')], {
+    cwd: path.join(ROOT, 'agent'),
+    windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    env,
+  })
+  proc.stderr?.on('data', d => {
+    const msg = d.toString().trim()
+    if (msg) console.error('[agent]', msg)
+  })
   const startTime = Date.now()
   proc.on('close', code => {
     if (_stopping) return
     if (Date.now() - startTime > 60_000) _agentRestartDelay = 3000
     console.error(`[main] Agent exited (code ${code}), restarting in ${_agentRestartDelay}ms`)
-    setTimeout(() => { agentProc = spawnAgent() }, _agentRestartDelay)
+    setTimeout(() => {
+      const cfg = loadConfig()
+      agentProc = spawnAgent(cfg.serverUrl, cfg.apiKey)
+    }, _agentRestartDelay)
     _agentRestartDelay = Math.min(_agentRestartDelay * 2, 30_000)
   })
   return proc
 }
 
-async function startPython() {
-  backendProc = spawnPython(path.join(ROOT, 'backend', 'main.py'), path.join(ROOT, 'backend'))
-  const ready = await waitForBackend()
-  if (!ready) console.error('[main] Backend did not become ready in time')
-  agentProc = spawnAgent()
+function startAgent() {
+  const cfg = loadConfig()
+  agentProc = spawnAgent(cfg.serverUrl, cfg.apiKey)
 }
 
-function stopPython() {
+function stopAgent() {
   _stopping = true
-  killProc(backendProc); backendProc = null
-  killProc(agentProc);   agentProc   = null
+  killProc(agentProc)
+  agentProc = null
 }
 
-// ── Window ───────────────────────────────────────────────
+// ── Window ────────────────────────────────────────────────
 function createWindow() {
   win = new BrowserWindow({
     width: 1440, height: 900,
@@ -109,14 +133,14 @@ ipcMain.on('win-close',    () => win?.close())
 
 app.whenReady().then(() => {
   createWindow()
-  startPython()
+  startAgent()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
-app.on('before-quit', stopPython)
+app.on('before-quit', stopAgent)
 app.on('window-all-closed', () => {
-  stopPython()
+  stopAgent()
   if (process.platform !== 'darwin') app.quit()
 })

@@ -1,4 +1,7 @@
-const BASE = (typeof __vw !== 'undefined') ? __vw.apiBase : 'http://localhost:8000'
+function _serverUrl() {
+  try { return localStorage.getItem('voidwatch_server_url') || 'http://localhost:8000' }
+  catch { return 'http://localhost:8000' }
+}
 
 function _apiKey() {
   try { return localStorage.getItem('voidwatch_api_key') || '' } catch { return '' }
@@ -10,13 +13,13 @@ function _headers(extra = {}) {
 }
 
 async function get(path) {
-  const resp = await fetch(BASE + path, { headers: _headers() })
+  const resp = await fetch(_serverUrl() + path, { headers: _headers() })
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
   return resp.json()
 }
 
 async function put(path, body) {
-  const resp = await fetch(BASE + path, {
+  const resp = await fetch(_serverUrl() + path, {
     method: 'PUT',
     headers: _headers({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
@@ -26,18 +29,21 @@ async function put(path, body) {
 }
 
 async function post(path) {
-  const resp = await fetch(BASE + path, { method: 'POST', headers: _headers() })
+  const resp = await fetch(_serverUrl() + path, { method: 'POST', headers: _headers() })
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
   return resp.json()
 }
 
 export const api = {
-  base: BASE,
-  async ping() { try { const r = await fetch(BASE + '/health'); return r.ok } catch { return false } },
-  alerts(params = {})    { return get('/alerts?'   + new URLSearchParams(params)) },
+  get base() { return _serverUrl() },
+  async ping() {
+    try { const r = await fetch(_serverUrl() + '/health'); return r.ok }
+    catch { return false }
+  },
+  alerts(params = {})    { return get('/alerts?'    + new URLSearchParams(params)) },
   processes(params = {}) { return get('/processes?' + new URLSearchParams(params)) },
   agents()               { return get('/agents') },
-  timeline(params = {})  { return get('/timeline?' + new URLSearchParams(params)) },
+  timeline(params = {})  { return get('/timeline?'  + new URLSearchParams(params)) },
   getSettings()          { return get('/settings') },
   getStats()             { return get('/settings/stats') },
   saveSettings(data)     { return put('/settings', data) },

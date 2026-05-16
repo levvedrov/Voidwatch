@@ -41,15 +41,15 @@ export async function render(el) {
       { level: 'LOW',      label: 'Benign',  count: dist.LOW      },
     ]
 
-    // Active high-risk: current processes with ml >= 0.80, deduplicated by name
+    // Active high-risk: use alerts (risk_score reflects full pipeline incl. context suppression)
     const highMap = {}
-    procs.filter(p => (p.ml_score ?? 0) >= 0.80).forEach(p => {
-      const key = p.name.toLowerCase()
-      if (!highMap[key] || (p.ml_score ?? 0) > (highMap[key].ml_score ?? 0))
-        highMap[key] = p
+    alerts.filter(a => (a.ml_score ?? 0) >= 0.80 && a.risk_score >= 50).forEach(a => {
+      const key = a.process_name.toLowerCase()
+      if (!highMap[key] || a.risk_score > highMap[key].risk_score)
+        highMap[key] = a
     })
     const highProcs = Object.values(highMap)
-      .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))
+      .sort((a, b) => b.risk_score - a.risk_score)
       .slice(0, 12)
 
     el.innerHTML = `
@@ -97,7 +97,7 @@ export async function render(el) {
                   const c  = mlColor(ml)
                   return `<tr class="row-${mlLevel(p.ml_score ?? 0)}">
                     <td><span class="risk-dot" style="background:${c}"></span></td>
-                    <td class="proc-name">${esc(p.name)}</td>
+                    <td class="proc-name">${esc(p.process_name)}</td>
                     <td style="color:var(--text-muted)">${esc(p.parent_name || '—')}</td>
                     <td style="color:var(--text-muted);font-size:11px;font-family:var(--font-mono)">${esc(p.agent_id)}</td>
                     <td style="font-family:var(--font-mono);font-weight:700;color:${c}">${ml}%</td>

@@ -19,10 +19,11 @@ from sklearn.metrics import classification_report, confusion_matrix
 
 from features import extract, FEATURE_NAMES
 
-_DIR         = os.path.dirname(__file__)
-_MODEL_DIR   = os.path.join(_DIR, "model")
-MODEL_PATH   = os.path.join(_MODEL_DIR, "voidwatch_rf.joblib")
-SCALER_PATH  = os.path.join(_MODEL_DIR, "voidwatch_scaler.joblib")
+_DIR             = os.path.dirname(__file__)
+_MODEL_DIR       = os.path.join(_DIR, "model")
+MODEL_PATH       = os.path.join(_MODEL_DIR, "voidwatch_rf.joblib")
+SCALER_PATH      = os.path.join(_MODEL_DIR, "voidwatch_scaler.joblib")
+CALIBRATOR_PATH  = os.path.join(_MODEL_DIR, "voidwatch_calibrator.joblib")
 _VER_FILE    = os.path.join(_MODEL_DIR, "voidwatch_model_ver.txt")
 _MODEL_VER   = "v4-behavioral"
 
@@ -172,6 +173,64 @@ def _malicious_samples() -> np.ndarray:
     t[_F["has_suspicious_port"]] = 1
     blocks.append(_repeat(t, 80))
 
+    # --- DISCOVERY ---
+
+    # whoami / net user / nltest (signed system binary doing recon)
+    t = [0.0] * N_FEATURES
+    t[_F["has_discovery_cmd"]] = 1; t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # PowerShell recon (Get-ADUser, Get-ADGroup, etc.)
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["has_discovery_cmd"]] = 1
+    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # Discovery + encoded combo
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["has_discovery_cmd"]] = 1
+    t[_F["has_encoded_cmd"]] = 1; t[_F["is_signed"]] = 1
+    blocks.append(_repeat(t, 80))
+
+    # --- LATERAL MOVEMENT ---
+
+    # psexec / wmic remote / sc remote
+    t = [0.0] * N_FEATURES
+    t[_F["has_lateral_movement_cmd"]] = 1; t[_F["connection_count"]] = 1
+    t[_F["is_signed"]] = 1
+    blocks.append(_repeat(t, 120))
+
+    # PS remoting (Invoke-Command, Enter-PSSession)
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["has_lateral_movement_cmd"]] = 1
+    t[_F["connection_count"]] = 1; t[_F["is_signed"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # Lateral movement + discovery chain
+    t = [0.0] * N_FEATURES
+    t[_F["has_lateral_movement_cmd"]] = 1; t[_F["has_discovery_cmd"]] = 1
+    t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 80))
+
+    # --- CREDENTIAL DUMPING ---
+
+    # lsass / ntdsutil / comsvcs dump
+    t = [0.0] * N_FEATURES
+    t[_F["has_credential_dump_cmd"]] = 1; t[_F["from_system32"]] = 1
+    t[_F["is_signed"]] = 1
+    blocks.append(_repeat(t, 120))
+
+    # PowerShell credential dump (comsvcs, minidump)
+    t = [0.0] * N_FEATURES
+    t[_F["is_powershell"]] = 1; t[_F["has_credential_dump_cmd"]] = 1
+    t[_F["is_signed"]] = 1
+    blocks.append(_repeat(t, 100))
+
+    # Cred dump + long cmd (mimikatz inline)
+    t = [0.0] * N_FEATURES
+    t[_F["has_credential_dump_cmd"]] = 1; t[_F["cmd_is_long"]] = 1
+    blocks.append(_repeat(t, 80))
+
     return np.vstack(blocks)
 
 
@@ -292,6 +351,49 @@ def _benign_samples() -> np.ndarray:
     # Unsigned background process — no connections (common for benign user procs)
     t = [0.0] * N_FEATURES
     t[_F["connection_count"]] = 0
+    blocks.append(_repeat(t, 150))
+
+    # --- CRITICAL WINDOWS SYSTEM PROCESSES ---
+
+    # lsass.exe — always system32, signed, has network (auth traffic), no behavioral flags
+    t = [0.0] * N_FEATURES
+    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 250))
+
+    # System Idle Process / Memory Compression — unsigned, no path, may have connections
+    t = [0.0] * N_FEATURES
+    t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 200))
+
+    t = [0.0] * N_FEATURES
+    t[_F["connection_count"]] = 0
+    blocks.append(_repeat(t, 150))
+
+    # csrss.exe, wininit.exe, smss.exe — system32, signed, no network
+    t = [0.0] * N_FEATURES
+    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 0
+    blocks.append(_repeat(t, 250))
+
+    # winlogon.exe, services.exe, spoolsv.exe — system32, signed, occasional network
+    t = [0.0] * N_FEATURES
+    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 200))
+
+    # --- DRIVER / PERIPHERAL PROCESSES (NVIDIA, Logitech, etc.) ---
+
+    # Signed driver services from Program Files with network (update checks, telemetry)
+    t = [0.0] * N_FEATURES
+    t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
+    blocks.append(_repeat(t, 200))
+
+    # Signed driver services — no network (display drivers, input devices)
+    t = [0.0] * N_FEATURES
+    t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 0
+    blocks.append(_repeat(t, 150))
+
+    # Signed peripheral apps outside Program Files (Logitech G Hub, etc.)
+    t = [0.0] * N_FEATURES
+    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 0
     blocks.append(_repeat(t, 150))
 
     return np.vstack(blocks)
@@ -465,6 +567,7 @@ class ProcessClassifier:
     def __init__(self):
         self.rf: RandomForestClassifier | None = None
         self.scaler: StandardScaler | None = None
+        self.calibrator = None
 
     def train(self) -> None:
         from train import ATTACK_DIR, BENIGN_DIR, _load_folder
@@ -519,30 +622,46 @@ class ProcessClassifier:
         y_test:         np.ndarray | None = None,
         test_scenarios: list[str]  | None = None,
     ) -> None:
+        from sklearn.isotonic import IsotonicRegression
+        from sklearn.model_selection import train_test_split as _tts
+
         self.scaler = StandardScaler()
         X_s = self.scaler.fit_transform(X_train)
+
+        # Reserve 10% of training data for isotonic calibration
+        X_s_rf, X_s_cal, y_rf, y_cal = _tts(
+            X_s, y_train, test_size=0.1, random_state=42, stratify=y_train
+        )
 
         self.rf = RandomForestClassifier(
             n_estimators=200,
             max_depth=14,
             min_samples_leaf=2,
-            class_weight={0: 1, 1: 1.5},
+            class_weight={0: 1, 1: 4},
             random_state=42,
             n_jobs=-1,
         )
-        self.rf.fit(X_s, y_train)
+        self.rf.fit(X_s_rf, y_rf)
+
+        raw_cal = self.rf.predict_proba(X_s_cal)[:, 1]
+        self.calibrator = IsotonicRegression(out_of_bounds="clip")
+        self.calibrator.fit(raw_cal, y_cal)
 
         has_test = X_test is not None and len(X_test) > 0
         if has_test:
             X_te_s = self.scaler.transform(X_test)
-            y_pred = self.rf.predict(X_te_s)
+            raw_te  = self.rf.predict_proba(X_te_s)[:, 1]
+            y_proba_cal = self.calibrator.predict(raw_te)
+            y_pred = (y_proba_cal >= 0.5).astype(int)
             eval_y_true = y_test
             header = "── Held-out scenario evaluation ──────────────────"
             if test_scenarios:
                 unique = sorted(set(test_scenarios))
                 print(f"\n[classifier] Test scenarios ({len(unique)}): {', '.join(unique)}")
         else:
-            y_pred     = self.rf.predict(X_s)
+            raw_tr      = self.rf.predict_proba(X_s)[:, 1]
+            y_proba_cal = self.calibrator.predict(raw_tr)
+            y_pred      = (y_proba_cal >= 0.5).astype(int)
             eval_y_true = y_train
             header     = "── Training-set evaluation (no held-out scenarios) ─"
 
@@ -554,7 +673,7 @@ class ProcessClassifier:
         print(f"Confusion matrix:\n  TN={cm[0,0]}  FP={cm[0,1]}\n  FN={cm[1,0]}  TP={cm[1,1]}\n")
 
         if has_test:
-            y_proba = self.rf.predict_proba(X_te_s)[:, 1]
+            y_proba = y_proba_cal
             print("── Threshold analysis (operational view) ─────────")
             for thr in (0.50, 0.60, 0.70, 0.80, 0.90):
                 y_t = (y_proba >= thr).astype(int)
@@ -568,8 +687,9 @@ class ProcessClassifier:
             print()
 
         os.makedirs(_MODEL_DIR, exist_ok=True)
-        joblib.dump(self.rf,     MODEL_PATH)
-        joblib.dump(self.scaler, SCALER_PATH)
+        joblib.dump(self.rf,         MODEL_PATH)
+        joblib.dump(self.scaler,     SCALER_PATH)
+        joblib.dump(self.calibrator, CALIBRATOR_PATH)
 
         n_train_mal = int(y_train.sum())
         n_test      = len(X_test)  if has_test else 0
@@ -587,6 +707,8 @@ class ProcessClassifier:
         if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
             self.rf     = joblib.load(MODEL_PATH)
             self.scaler = joblib.load(SCALER_PATH)
+            if os.path.exists(CALIBRATOR_PATH):
+                self.calibrator = joblib.load(CALIBRATOR_PATH)
         else:
             logging.getLogger(__name__).warning("Model not found — run train.py to generate it")
 
@@ -596,7 +718,10 @@ class ProcessClassifier:
         try:
             vec   = np.array([extract(proc)])
             vec_s = self.scaler.transform(vec)
-            return float(self.rf.predict_proba(vec_s)[0][1])
+            raw   = float(self.rf.predict_proba(vec_s)[0][1])
+            if self.calibrator is not None:
+                return float(self.calibrator.predict(np.array([raw]))[0])
+            return raw
         except Exception:
             return 0.0
 

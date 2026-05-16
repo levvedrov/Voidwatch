@@ -76,18 +76,25 @@ function setBar(state, msg) {
 }
 
 async function startup() {
+  // Sync server URL + API key from electron config into localStorage
+  try {
+    const cfg = await __vw.getConfig()
+    if (cfg.serverUrl) localStorage.setItem('voidwatch_server_url', cfg.serverUrl)
+    if (cfg.apiKey)    localStorage.setItem('voidwatch_api_key',    cfg.apiKey)
+  } catch {}
+
   content.style.opacity = '1'
   content.innerHTML = `
     <div class="ld-screen">
       <div class="ld-wordmark">VOIDWATCH</div>
       <div class="ld-track"><div class="ld-bar loading" id="ld-bar"></div></div>
-      <div class="ld-status" id="ld-status">Starting backend</div>
+      <div class="ld-status" id="ld-status">Connecting to server…</div>
     </div>
   `
 
   const backendReady = await poll(() => api.ping(), 45_000)
   if (!backendReady) {
-    setBar('fail', 'Backend failed to start — verify Python 3.9+ is in PATH')
+    setBar('fail', 'Cannot reach server — check Server URL in Settings')
     return
   }
 

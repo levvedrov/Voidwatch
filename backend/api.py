@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -249,10 +250,15 @@ def update_settings(payload: RetentionPayload):
 
 @router.get("/settings/stats", dependencies=[Depends(_check_auth)])
 def get_stats(db: Session = Depends(get_db)):
-    db_path = Path(__file__).parent / "voidwatch.db"
-    size    = db_path.stat().st_size if db_path.exists() else 0
+    from database import DATABASE_URL, _is_sqlite
+    db_size_mb = 0.0
+    if _is_sqlite:
+        db_path = Path(__file__).parent / "voidwatch.db"
+        if db_path.exists():
+            db_size_mb = round(db_path.stat().st_size / (1024 * 1024), 2)
     return {
-        "db_size_mb":      round(size / (1024 * 1024), 2),
+        "db_size_mb":      db_size_mb,
+        "db_type":         "sqlite" if _is_sqlite else "postgresql",
         "process_records": db.query(ProcessRecord).count(),
         "alert_records":   db.query(AlertRecord).count(),
     }

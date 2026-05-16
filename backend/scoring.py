@@ -32,6 +32,20 @@ BROWSER_PROCS  = {"chrome.exe","msedge.exe","firefox.exe","brave.exe","opera.exe
 DEV_TOOL_PROCS = {"code.exe","python.exe","python3.exe","node.exe","npm.exe","electron.exe",
                   "openconsole.exe","windowsterminal.exe","wt.exe","git.exe",
                   "git-remote-https.exe","devenv.exe","rider64.exe"}
+CRITICAL_SYSTEM_PROCS = {
+    "lsass.exe","csrss.exe","wininit.exe","smss.exe","winlogon.exe",
+    "services.exe","spoolsv.exe","system","registry","ntoskrnl.exe",
+    "system idle process","memory compression","secure system",
+}
+DRIVER_PROCS = {
+    "nvdisplay.container.exe","nvcplui.exe","nvtelemetrycontainer.exe",
+    "lghub.exe","lghub_agent.exe","lghub_updater.exe",
+    "razer synapse service.exe","razercentralservice.exe",
+    "corsairservice.exe","icue.exe",
+    "steelserieshid.exe","steelseriesengine3.exe",
+    "amdrsserv.exe","amdow.exe","radeoninstaller.exe",
+    "rivatuner.exe","msiafterburner.exe","rtss.exe",
+}
 
 ALERT_THRESHOLD = 25   # MEDIUM+
 
@@ -247,7 +261,11 @@ def _context(proc: ProcessData) -> tuple[float, list[str]]:
                                    "downloadstring", "downloadfile"])
     )
     if not _has_strong_signal:
-        if name in DEFENDER_PROCS:
+        if name in CRITICAL_SYSTEM_PROCS:
+            mod *= 0.05; notes.append(f"Critical Windows system process — heavily suppressed")
+        elif name in DRIVER_PROCS:
+            mod *= 0.1; notes.append(f"Known driver/peripheral process — suppressed")
+        elif name in DEFENDER_PROCS:
             mod *= 0.2; notes.append(f"Microsoft Defender component — heavily suppressed")
         elif name in BROWSER_PROCS:
             mod *= 0.4; notes.append(f"Trusted browser — score reduced")
@@ -364,9 +382,9 @@ def score_process(proc: ProcessData, all_procs: list[ProcessData], ml_proba: flo
     ctx_mod,    ctx_notes                = _context(proc)
     corr_bonus, corr_reasons, corr_mitre = _correlation(proc, all_procs)
 
-    # ML additive contribution: (proba - 0.45) × 50
-    #   proba=0.95 → +25, proba=0.70 → +12, proba=0.45 → 0, proba=0.20 → -12
-    ml_addon = round((ml_proba - 0.45) * 50)
+    # ML additive contribution: (proba - 0.55) × 50
+    #   proba=0.95 → +20, proba=0.75 → +10, proba=0.55 → 0, proba=0.30 → -12
+    ml_addon = round((ml_proba - 0.55) * 50)
     raw      = max(0.0, base_score + corr_bonus + ml_addon)
     adjusted = raw * conf_mod * ctx_mod
     final    = min(round(adjusted), 150)

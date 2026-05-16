@@ -28,7 +28,15 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "Bash(Remove-Item \"c:\\\\GitHub\\\\backend\\\\model\\\\*\" -Force -ErrorAction SilentlyContinue)",
-      "Bash(Remove-Item \"c:\\\\GitHub\\\\backend\\\\stats\\\\training_history.csv\" -Force -ErrorAction SilentlyContinue)"
+      "Bash(Remove-Item \"c:\\\\GitHub\\\\backend\\\\stats\\\\training_history.csv\" -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser)",
+      "PowerShell(Get-ExecutionPolicy -List)",
+      "Bash(npm install *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\TMP\\\\dashboard\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "Bash(python train.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python train.py)",
+      "Bash(python -X utf8 train.py)"
     ]
   }
 }

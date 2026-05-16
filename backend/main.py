@@ -1,11 +1,19 @@
 import logging
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from api import router
 from classifier import classifier
@@ -19,7 +27,13 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-_PRUNE_INTERVAL = 3600  # seconds between prune passes
+_PRUNE_INTERVAL = 3600
+
+HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "8000"))
+
+_CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
+_cors_origins = [o.strip() for o in _CORS_ORIGINS.split(",")] if _CORS_ORIGINS != "*" else ["*"]
 
 
 def _utcnow() -> datetime:
@@ -64,13 +78,22 @@ async def lifespan(app: FastAPI):
     if classifier.rf is not None:
         log.info("Model loaded")
     threading.Thread(target=_pruner, daemon=True, name="db-pruner").start()
-    log.info("Listening on http://127.0.0.1:8000")
+    log.info("Listening on http://%s:%d", HOST, PORT)
     yield
     log.info("Backend shutting down")
 
 
-app = FastAPI(title="Voidwatch Backend", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Voidwatch Backend", version="0.3.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(router)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False, log_level="warning")
+    uvicorn.run("main:app", host=HOST, port=PORT, reload=False, log_level="warning")
