@@ -194,6 +194,20 @@ def _base(proc: ProcessData) -> tuple[float, list[str], list[str]]:
         reasons.append("Random-looking name from suspicious path with network — C2 dropper pattern")
         mitre.append("T1036")
 
+    # User-installed script interpreter with active outbound connections.
+    # python.exe/node.exe installed under AppData (default python.org Windows installer path)
+    # making network connections is a common Python RAT / C2 agent pattern.
+    _INTERP = {"python.exe", "python3.exe", "node.exe"}
+    if (name in _INTERP and proc.connection_count > 0 and path
+            and "\\appdata\\local\\" in path
+            and not any(p in path for p in PROGFILES_PATHS)):
+        score += 55
+        reasons.append(
+            f"User-installed script interpreter ({proc.name}) with active network connections — "
+            "common Python/Node RAT staging pattern (T1059.006)"
+        )
+        mitre += ["T1059.006", "T1071"]
+
     return score, reasons, list(dict.fromkeys(mitre))
 
 
@@ -254,11 +268,16 @@ def _context(proc: ProcessData) -> tuple[float, list[str]]:
     # Trusted process baseline — reduce score unless behavioral evidence present.
     # Suppression is bypassed when: running from suspicious path, spawned by Office,
     # or using encoded/download commands (process is being abused).
+    _INTERP = {"python.exe", "python3.exe", "node.exe"}
     _has_strong_signal = (
         any(p in path for p in SUSPICIOUS_PATHS)
         or parent in OFFICE_APPS
         or any(k in cmd for k in ["-enc", "-encodedcommand", "iex", "invoke-expression",
                                    "downloadstring", "downloadfile"])
+        # User-installed interpreter (AppData, not Program Files) with network = bypass suppression
+        or (name in _INTERP and proc.connection_count > 0
+            and "\\appdata\\local\\" in path
+            and not any(p in path for p in PROGFILES_PATHS))
     )
     if not _has_strong_signal:
         if name in CRITICAL_SYSTEM_PROCS:

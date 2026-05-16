@@ -36,7 +36,8 @@
       "Bash(Select-Object FullName)",
       "Bash(python train.py)",
       "Bash(PYTHONIOENCODING=utf-8 python train.py)",
-      "Bash(python -X utf8 train.py)"
+      "Bash(python -X utf8 train.py)",
+      "Bash(Test-Path C:\\\\TMP\\\\README.md)"
     ]
   }
 }
