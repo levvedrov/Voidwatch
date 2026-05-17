@@ -2,11 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY server/backend/requirements.txt ./requirements.txt
+COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir psycopg2-binary
 
-COPY server/backend/ ./
+COPY backend/ ./
 RUN mkdir -p /app/data /app/models
 
 EXPOSE 8000
