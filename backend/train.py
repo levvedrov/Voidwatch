@@ -33,9 +33,15 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    import evtx as _evtx_lib
+    _EVTX_AVAILABLE = True
+except ImportError:
+    _EVTX_AVAILABLE = False
+
 sys.path.insert(0, os.path.dirname(__file__))
 
-from classifier import ProcessClassifier, _benign_samples, _malicious_samples, _VER_FILE, _MODEL_VER
+from classifier import ProcessClassifier, _VER_FILE, _MODEL_VER
 from features import extract
 from models import ProcessData
 
@@ -247,13 +253,75 @@ def _parse_plain(json_path: Path) -> tuple[list[dict], list[dict]]:
     return proc, net
 
 
+def _evtx_record_to_flat(record_json: str) -> dict | None:
+    """Convert one evtx JSON record → flat dict matching Mordor format, or None."""
+    try:
+        obj = json.loads(record_json)
+    except json.JSONDecodeError:
+        return None
+
+    event  = obj.get("Event", {})
+    system = event.get("System", {})
+    raw_eid = system.get("EventID", 0)
+    if isinstance(raw_eid, dict):
+        raw_eid = raw_eid.get("#text", 0)
+    try:
+        eid = int(raw_eid)
+    except (ValueError, TypeError):
+        return None
+
+    if eid not in (_PROC_EIDS | _NET_EIDS):
+        return None
+
+    flat: dict[str, str] = {"EventID": str(eid)}
+    event_data = event.get("EventData", {})
+    data = event_data.get("Data", [])
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                name = item.get("#attributes", {}).get("Name", "")
+                text = item.get("#text", "")
+                if name:
+                    flat[name] = str(text) if text is not None else ""
+    elif isinstance(data, dict):
+        name = data.get("#attributes", {}).get("Name", "")
+        text = data.get("#text", "")
+        if name:
+            flat[name] = str(text) if text is not None else ""
+    return flat
+
+
+def _parse_evtx(evtx_path: Path) -> tuple[list[dict], list[dict]]:
+    """Return (process_events, network_events) from a binary .evtx file."""
+    if not _EVTX_AVAILABLE:
+        return [], []
+    proc, net = [], []
+    try:
+        parser = _evtx_lib.PyEvtxParser(str(evtx_path))
+        for record in parser.records_json():
+            flat = _evtx_record_to_flat(record["data"])
+            if flat is None:
+                continue
+            kind, _ = _classify_event(flat)
+            if kind == "proc":
+                proc.append(flat)
+            elif kind == "net":
+                net.append(flat)
+    except Exception:
+        pass
+    return proc, net
+
+
 # ---------------------------------------------------------------------------
 # Network map builder — handles Sysmon EventID 3 and WFP EventID 5156
 # ---------------------------------------------------------------------------
 
 def _build_net_map(net_events: list[dict]) -> dict[int, dict]:
     """Aggregate network events by PID. Handles EventID 3 and 5156."""
-    nm: dict[int, dict] = defaultdict(lambda: {"ips": [], "ports": [], "protocols": []})
+    nm: dict[int, dict] = defaultdict(lambda: {
+        "ips": [], "ports": [], "protocols": [],
+        "has_dns": False, "outbound": False,
+    })
     for e in net_events:
         eid = _event_id(e)
         try:
@@ -262,16 +330,23 @@ def _build_net_map(net_events: list[dict]) -> dict[int, dict]:
             continue
 
         if eid == 3:
-            # Sysmon network event — standard field names
-            ip    = _field(e, "DestinationIp", "dst_ip", "DestIp")
-            port  = _field(e, "DestinationPort", "dst_port")
-            proto = _field(e, "Protocol", "protocol")
+            ip       = _field(e, "DestinationIp", "dst_ip", "DestIp")
+            port     = _field(e, "DestinationPort", "dst_port")
+            proto    = _field(e, "Protocol", "protocol")
+            hostname = _field(e, "DestinationHostname", "dst_hostname")
+            initiated = _field(e, "Initiated", "initiated").lower()
+            if hostname and hostname != "-":
+                nm[pid]["has_dns"] = True
+            if initiated == "true":
+                nm[pid]["outbound"] = True
         elif eid == 5156:
-            # Windows Filtering Platform — different field names, numeric protocol
-            ip    = _field(e, "DestAddress")
-            port  = _field(e, "DestPort")
+            ip        = _field(e, "DestAddress")
+            port      = _field(e, "DestPort")
             proto_num = _field(e, "Protocol")
-            proto = "tcp" if proto_num == "6" else "udp" if proto_num == "17" else proto_num
+            proto     = "tcp" if proto_num == "6" else "udp" if proto_num == "17" else proto_num
+            direction = _field(e, "Direction").lower()
+            if "outbound" in direction:
+                nm[pid]["outbound"] = True
         else:
             continue
 
@@ -296,23 +371,31 @@ def _to_process_data(event: dict, net_map: dict) -> ProcessData | None:
     eid = _event_id(event)
 
     if eid == 4688:
-        # Windows Security process creation — different field names, hex PIDs
-        image  = _field(event, "NewProcessName")
-        cmd    = _field(event, "CommandLine", "ProcessCommandLine")
-        parent = _field(event, "ParentProcessName")
-        hashes = ""
+        image      = _field(event, "NewProcessName")
+        cmd        = _field(event, "CommandLine", "ProcessCommandLine")
+        parent     = _field(event, "ParentProcessName")
+        hashes     = ""
+        integrity  = ""
+        parent_cmd = ""
+        orig_fname = ""
+        tel = _field(event, "TokenElevationType")
+        token_elevated = tel in {"%%1937", "2", "TokenElevationTypeFull"}
         try:
             pid  = _parse_pid(_field(event, "NewProcessId"))
-            # In 4688, ProcessId is the *creator* (parent) PID
             ppid = _parse_pid(_field(event, "ProcessId") or "0")
         except (ValueError, TypeError):
             return None
     else:
-        # EventID 1 (Sysmon) — standard flat or winlogbeat format
-        image  = _field(event, "Image",         "image")
-        cmd    = _field(event, "CommandLine",   "command_line")
-        parent = _field(event, "ParentImage",   "parent_image")
-        hashes = _field(event, "Hashes",        "hashes")
+        image      = _field(event, "Image",              "image")
+        cmd        = _field(event, "CommandLine",        "command_line")
+        parent     = _field(event, "ParentImage",        "parent_image")
+        hashes     = _field(event, "Hashes",             "hashes")
+        integrity  = _field(event, "IntegrityLevel",     "integrity_level")
+        parent_cmd = _field(event, "ParentCommandLine",  "parent_command_line")
+        orig_fname = _field(event, "OriginalFileName",   "original_filename")
+        if orig_fname == "-":
+            orig_fname = ""
+        token_elevated = False
         try:
             pid  = int(_field(event, "ProcessId",       "process_id"))
             ppid = int(_field(event, "ParentProcessId", "parent_process_id") or 0)
@@ -324,20 +407,26 @@ def _to_process_data(event: dict, net_map: dict) -> ProcessData | None:
 
     net = net_map.get(pid, {})
     return ProcessData(
-        name              = _proc_name(image),
-        parent_name       = _proc_name(parent) if parent else "",
-        command_line      = cmd,
-        path              = image.lower(),
-        pid               = pid,
-        parent_pid        = ppid,
-        cpu_usage         = 0.0,
-        mem_usage         = 0.0,
-        is_signed         = _infer_signed(image),
-        sha256            = _sha256(hashes),
-        connection_count  = len(net.get("ips", [])),
-        destination_ips   = net.get("ips", []),
-        destination_ports = net.get("ports", []),
-        protocols         = net.get("protocols", []),
+        name                 = _proc_name(image),
+        parent_name          = _proc_name(parent) if parent else "",
+        command_line         = cmd,
+        path                 = image.lower(),
+        pid                  = pid,
+        parent_pid           = ppid,
+        cpu_usage            = 0.0,
+        mem_usage            = 0.0,
+        is_signed            = _infer_signed(image),
+        sha256               = _sha256(hashes),
+        connection_count     = len(net.get("ips", [])),
+        destination_ips      = net.get("ips", []),
+        destination_ports    = net.get("ports", []),
+        protocols            = net.get("protocols", []),
+        integrity_level      = integrity,
+        parent_command_line  = parent_cmd,
+        original_filename    = orig_fname,
+        token_is_elevated    = token_elevated,
+        has_dns_destination  = net.get("has_dns", False),
+        connection_is_outbound = net.get("outbound", False),
     )
 
 
@@ -390,6 +479,7 @@ def _load_folder(folder: Path, fixed_label: int) -> tuple[np.ndarray, np.ndarray
         p for ext in ("*.json", "*.ndjson", "*.log")
         for p in folder.rglob(ext)
     )
+    evtxs    = sorted(folder.rglob("*.evtx")) if _EVTX_AVAILABLE else []
 
     zip_covered: set[str] = set()
     for zp in zips:
@@ -400,9 +490,10 @@ def _load_folder(folder: Path, fixed_label: int) -> tuple[np.ndarray, np.ndarray
             pass
 
     sources: list[tuple[str, Path]] = (
-        [("zip", p) for p in zips]
-        + [("tgz", p) for p in tarballs]
+        [("zip",  p) for p in zips]
+        + [("tgz",  p) for p in tarballs]
         + [("plain", p) for p in plains if p.name not in zip_covered]
+        + [("evtx", p) for p in evtxs]
     )
 
     if not sources:
@@ -416,6 +507,8 @@ def _load_folder(folder: Path, fixed_label: int) -> tuple[np.ndarray, np.ndarray
                 X, y = _features_from_zip(src, fixed_label)
             elif kind == "tgz":
                 X, y = _features_from_targz(src, fixed_label)
+            elif kind == "evtx":
+                X, y = _features_from_events(*_parse_evtx(src), fixed_label)
             else:
                 X, y = _features_from_file(src, fixed_label)
         except Exception as exc:
@@ -451,18 +544,11 @@ def main() -> None:
     print(f"\nBenign datasets  ({BENIGN_DIR})")
     X_ben_otrf, y_ben_otrf, scen_ben = _load_folder(BENIGN_DIR, fixed_label=0)
 
-    print("\nSynthetic baseline …", end=" ", flush=True)
-    X_syn_mal = _malicious_samples()
-    X_syn_ben = _benign_samples()
-    y_syn_mal = np.ones(len(X_syn_mal),  dtype=int)
-    y_syn_ben = np.zeros(len(X_syn_ben), dtype=int)
-    print(f"{len(X_syn_mal)} malicious  {len(X_syn_ben)} benign")
-
     X_test_parts: list[np.ndarray] = []
     y_test_parts: list[np.ndarray] = []
     test_scens:   list[str]        = []
-    X_train_parts = [X_syn_mal, X_syn_ben]
-    y_train_parts = [y_syn_mal, y_syn_ben]
+    X_train_parts: list[np.ndarray] = []
+    y_train_parts: list[np.ndarray] = []
 
     def _scenario_split(X, y, scens, label_prefix=""):
         unique = list(set(scens))

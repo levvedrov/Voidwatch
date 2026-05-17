@@ -26,6 +26,13 @@ class ProcessData(BaseModel):
     destination_ips: list[str]
     destination_ports: list[int]
     protocols: list[str]
+    # Extended fields — populated from OTRF events; optional so live agent telemetry still works
+    integrity_level: str = ""        # "Low" | "Medium" | "High" | "System"
+    parent_command_line: str = ""    # full command line of the parent process
+    original_filename: str = ""      # PE OriginalFileName — detects renamed binaries
+    token_is_elevated: bool = False  # TokenElevationType == elevated (EventID 4688)
+    has_dns_destination: bool = False  # any network event resolved a hostname
+    connection_is_outbound: bool = False  # any outbound-initiated connection
 
 
 class RegisterPayload(BaseModel):

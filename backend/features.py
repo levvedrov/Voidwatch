@@ -3,6 +3,7 @@ Feature extraction layer.
 Converts ProcessData into a fixed-length numeric vector for the ML classifier.
 """
 from __future__ import annotations
+import math
 from models import ProcessData
 
 OFFICE_APPS     = {"winword.exe","excel.exe","powerpnt.exe","outlook.exe","onenote.exe","msaccess.exe","mspub.exe"}
@@ -48,11 +49,18 @@ FEATURE_NAMES = [
     "is_known_dev_tool",
     "is_known_browser",
     "cmd_is_long",
+    "cmd_length_norm",
     "suspicious_flag_count",
     "uses_common_dev_port",
     "has_discovery_cmd",
     "has_lateral_movement_cmd",
     "has_credential_dump_cmd",
+    "is_elevated",
+    "is_low_integrity",
+    "filename_mismatch",
+    "parent_cmd_suspicious",
+    "has_dns_destination",
+    "connection_is_outbound",
 ]
 
 
@@ -79,6 +87,19 @@ def extract(proc: ProcessData) -> list[float]:
         has_hidden_window + from_temp + from_downloads +
         has_registry_persist + has_sched_task
     ) / 9.0
+
+    # Extended fields (populated from OTRF; default to neutral values from live agent)
+    integrity = proc.integrity_level.lower()
+    is_elevated      = float(integrity in {"high", "system"} or proc.token_is_elevated)
+    is_low_integrity = float(integrity == "low")
+    orig = proc.original_filename.lower().strip()
+    filename_mismatch = float(bool(orig) and orig != proc.name.lower())
+    parent_cmd = proc.parent_command_line.lower()
+    parent_cmd_suspicious = float(any(k in parent_cmd for k in [
+        "-enc", "-encodedcommand", "frombase64string",
+        "iex", "invoke-expression",
+        "downloadstring", "downloadfile", "invoke-webrequest",
+    ]))
 
     has_discovery_cmd = float(any(k in cmd for k in [
         "whoami", "net user", "net localgroup", "net group", "nltest",
@@ -120,16 +141,23 @@ def extract(proc: ProcessData) -> list[float]:
         float(any(p in path for p in SYSTEM32_PATHS)),
         float(any(p in path for p in PROGFILES_PATHS)),
         float(proc.is_signed),
-        float(proc.connection_count > 0),
+        math.log1p(proc.connection_count) / math.log1p(50),
         float(any(p in SUSPICIOUS_PORTS for p in proc.destination_ports)),
         has_registry_persist,
         has_sched_task,
         float(name in DEV_TOOLS),
         float(name in KNOWN_BROWSERS),
         float(len(cmd) > 500),
+        min(len(cmd), 2000) / 2000.0,
         suspicious_flag_count,
         float(any(p in COMMON_DEV_PORTS for p in proc.destination_ports)),
         has_discovery_cmd,
         has_lateral_movement_cmd,
         has_credential_dump_cmd,
+        is_elevated,
+        is_low_integrity,
+        filename_mismatch,
+        parent_cmd_suspicious,
+        float(proc.has_dns_destination),
+        float(proc.connection_is_outbound),
     ]

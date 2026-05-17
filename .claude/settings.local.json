@@ -37,7 +37,24 @@
       "Bash(python train.py)",
       "Bash(PYTHONIOENCODING=utf-8 python train.py)",
       "Bash(python -X utf8 train.py)",
-      "Bash(Test-Path C:\\\\TMP\\\\README.md)"
+      "Bash(Test-Path C:\\\\TMP\\\\README.md)",
+      "Bash(Get-ChildItem -Force)",
+      "Bash(Select-Object -Property Name, Mode)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import sklearn; print\\(sklearn.__version__\\)\")",
+      "Bash(cd /tmp)",
+      "Bash(unzip -q \"c:/Users/Administrator/tmp/backend/datasets/otrf/attack/defense_evasion/host/auditpol_system_user_auditpolicy_modification.zip\" -d sample_extract)",
+      "Bash(cd /tmp/sample_extract && head -c 5000 auditpol_system_user_auditpolicy_modification.json | jq '. | type' 2>/dev/null || head -c 2000 auditpol_system_user_auditpolicy_modification.json)",
+      "Read(//tmp/**)",
+      "Bash(rm -rf sample_extract)",
+      "Bash(unzip -q \"c:/Users/Administrator/tmp/backend/datasets/otrf/attack/defense_evasion/host/cmd_bitsadmin_download_psh_script.zip\" -d sample_extract)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3)",
+      "WebFetch(domain:securitydatasets.com)",
+      "PowerShell(Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force)",
+      "PowerShell(Get-ExecutionPolicy -Scope CurrentUser)",
+      "Bash(cmd /c \"npm start\")",
+      "Bash(node node_modules/electron/index.js)"
     ]
   }
 }

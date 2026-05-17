@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
     init_db()
     log.info("Database initialised")
     classifier.load()
-    if classifier.rf is not None:
+    if classifier.model is not None:
         log.info("Model loaded")
     threading.Thread(target=_pruner, daemon=True, name="db-pruner").start()
     log.info("Listening on http://%s:%d", HOST, PORT)

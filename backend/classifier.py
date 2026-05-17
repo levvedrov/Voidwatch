@@ -1,9 +1,9 @@
 """
-RandomForest classifier trained on synthetic labeled process data.
+HistGradientBoosting classifier trained on synthetic labeled process data.
 Supplements rule-based scoring — does NOT replace it.
 
 Pipeline:
-  ProcessData → feature_vector → RF → malicious probability (0–1)
+  ProcessData → feature_vector → HistGBT → malicious probability (0–1)
 """
 from __future__ import annotations
 import csv
@@ -12,25 +12,30 @@ import logging
 import os
 import numpy as np
 import joblib
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GroupShuffleSplit
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import (
+    classification_report, confusion_matrix,
+    roc_auc_score, average_precision_score,
+    roc_curve, precision_recall_curve,
+)
 
 from features import extract, FEATURE_NAMES
 
 _DIR             = os.path.dirname(__file__)
 _MODEL_DIR       = os.path.join(_DIR, "model")
-MODEL_PATH       = os.path.join(_MODEL_DIR, "voidwatch_rf.joblib")
+MODEL_PATH       = os.path.join(_MODEL_DIR, "voidwatch_model.joblib")
 SCALER_PATH      = os.path.join(_MODEL_DIR, "voidwatch_scaler.joblib")
 CALIBRATOR_PATH  = os.path.join(_MODEL_DIR, "voidwatch_calibrator.joblib")
-_VER_FILE    = os.path.join(_MODEL_DIR, "voidwatch_model_ver.txt")
-_MODEL_VER   = "v4-behavioral"
+_VER_FILE        = os.path.join(_MODEL_DIR, "voidwatch_model_ver.txt")
+_MODEL_VER       = "v5-hgbt"
 
 _STATS_DIR        = os.path.join(_DIR, "stats")
 _STATS_CSV        = os.path.join(_STATS_DIR, "training_history.csv")
 _STATS_GRAPH      = os.path.join(_STATS_DIR, "training_curves.png")
 _FEAT_IMP_GRAPH   = os.path.join(_STATS_DIR, "feature_importance.png")
+_ROC_PR_GRAPH     = os.path.join(_STATS_DIR, "roc_pr_curves.png")
 
 _CSV_FIELDS = [
     "session", "timestamp",
@@ -38,365 +43,12 @@ _CSV_FIELDS = [
     "n_test",  "n_test_mal",  "n_test_ben", "n_test_scenarios", "is_scenario_eval",
     "precision_mal", "recall_mal", "f1_mal",
     "precision_ben", "recall_ben", "f1_ben",
-    "accuracy", "tn", "fp", "fn", "tp",
+    "accuracy", "roc_auc", "avg_precision",
+    "tn", "fp", "fn", "tp",
 ]
 
-N_FEATURES = len(FEATURE_NAMES)
-RNG = np.random.default_rng(42)
 
-# Only connection_count is continuous — rule_score_norm removed
-_CONTINUOUS_IDX = frozenset(
-    i for i, name in enumerate(FEATURE_NAMES)
-    if name == "connection_count"
-)
 
-
-# ---------------------------------------------------------------------------
-# Synthetic training data
-# ---------------------------------------------------------------------------
-
-def _noise(n: int, scale: float = 0.08) -> np.ndarray:
-    return RNG.normal(0, scale, (n, N_FEATURES))
-
-
-def _repeat(template: list[float], n: int) -> np.ndarray:
-    base = np.tile(template, (n, 1)).astype(float)
-    noisy = np.clip(base + _noise(n), 0, None)
-    for i in range(N_FEATURES):
-        if i not in _CONTINUOUS_IDX:
-            noisy[:, i] = (noisy[:, i] > 0.5).astype(float)
-    return noisy
-
-
-# Feature index map for readability
-_F = {name: i for i, name in enumerate(FEATURE_NAMES)}
-
-
-def _malicious_samples() -> np.ndarray:
-    blocks = []
-
-    # --- SIGNED LOLBINs (signed=1 but behaviorally malicious) ---
-
-    # PowerShell LOLBIN: signed, from system32, but encoded + EP bypass
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["is_signed"]] = 1; t[_F["from_system32"]] = 1
-    t[_F["has_encoded_cmd"]] = 1; t[_F["has_ep_bypass"]] = 1
-    blocks.append(_repeat(t, 150))
-
-    # PowerShell LOLBIN: signed, encoded + download + IEX
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["is_signed"]] = 1; t[_F["from_system32"]] = 1
-    t[_F["has_encoded_cmd"]] = 1; t[_F["has_download_cmd"]] = 1; t[_F["has_iex"]] = 1
-    blocks.append(_repeat(t, 130))
-
-    # PowerShell LOLBIN: signed + hidden window + network
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["is_signed"]] = 1; t[_F["from_system32"]] = 1
-    t[_F["has_hidden_window"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # mshta LOLBIN: signed + network
-    t = [0.0] * N_FEATURES
-    t[_F["is_mshta"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # certutil LOLBIN: signed + download
-    t = [0.0] * N_FEATURES
-    t[_F["is_certutil"]] = 1; t[_F["is_signed"]] = 1; t[_F["has_download_cmd"]] = 1
-    blocks.append(_repeat(t, 90))
-
-    # regsvr32 Squiblydoo: signed + network
-    t = [0.0] * N_FEATURES
-    t[_F["is_regsvr32"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 90))
-
-    # Office → signed LOLBIN child (PS/cmd spawned from Word/Excel)
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["is_office_parent"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 120))
-
-    # Script host parent: signed child with network
-    t = [0.0] * N_FEATURES
-    t[_F["is_script_host_parent"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 1; t[_F["has_download_cmd"]] = 1
-    blocks.append(_repeat(t, 80))
-
-    # Signed binary + registry persistence
-    t = [0.0] * N_FEATURES
-    t[_F["is_signed"]] = 1; t[_F["has_registry_persist"]] = 1
-    blocks.append(_repeat(t, 80))
-
-    # Signed binary + scheduled task
-    t = [0.0] * N_FEATURES
-    t[_F["is_signed"]] = 1; t[_F["has_sched_task"]] = 1
-    blocks.append(_repeat(t, 70))
-
-    # --- UNSIGNED malicious ---
-
-    # Office → PowerShell + encoded + network (unsigned)
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["has_encoded_cmd"]] = 1
-    t[_F["is_office_parent"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 120))
-
-    # PS + encoded + EP bypass + hidden (unsigned)
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["has_encoded_cmd"]] = 1
-    t[_F["has_ep_bypass"]] = 1; t[_F["has_hidden_window"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # PS + download + IEX + network (unsigned)
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["has_download_cmd"]] = 1
-    t[_F["has_iex"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # Unsigned + Temp + network
-    t = [0.0] * N_FEATURES
-    t[_F["from_temp"]] = 1; t[_F["connection_count"]] = 1; t[_F["is_signed"]] = 0
-    blocks.append(_repeat(t, 80))
-
-    # Registry persistence (unsigned)
-    t = [0.0] * N_FEATURES
-    t[_F["has_registry_persist"]] = 1
-    blocks.append(_repeat(t, 70))
-
-    # Scheduled task (unsigned)
-    t = [0.0] * N_FEATURES
-    t[_F["has_sched_task"]] = 1
-    blocks.append(_repeat(t, 60))
-
-    # Downloads + unsigned + network
-    t = [0.0] * N_FEATURES
-    t[_F["from_downloads"]] = 1; t[_F["connection_count"]] = 1
-    t[_F["has_suspicious_port"]] = 1
-    blocks.append(_repeat(t, 80))
-
-    # --- DISCOVERY ---
-
-    # whoami / net user / nltest (signed system binary doing recon)
-    t = [0.0] * N_FEATURES
-    t[_F["has_discovery_cmd"]] = 1; t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # PowerShell recon (Get-ADUser, Get-ADGroup, etc.)
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["has_discovery_cmd"]] = 1
-    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # Discovery + encoded combo
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["has_discovery_cmd"]] = 1
-    t[_F["has_encoded_cmd"]] = 1; t[_F["is_signed"]] = 1
-    blocks.append(_repeat(t, 80))
-
-    # --- LATERAL MOVEMENT ---
-
-    # psexec / wmic remote / sc remote
-    t = [0.0] * N_FEATURES
-    t[_F["has_lateral_movement_cmd"]] = 1; t[_F["connection_count"]] = 1
-    t[_F["is_signed"]] = 1
-    blocks.append(_repeat(t, 120))
-
-    # PS remoting (Invoke-Command, Enter-PSSession)
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["has_lateral_movement_cmd"]] = 1
-    t[_F["connection_count"]] = 1; t[_F["is_signed"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # Lateral movement + discovery chain
-    t = [0.0] * N_FEATURES
-    t[_F["has_lateral_movement_cmd"]] = 1; t[_F["has_discovery_cmd"]] = 1
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 80))
-
-    # --- CREDENTIAL DUMPING ---
-
-    # lsass / ntdsutil / comsvcs dump
-    t = [0.0] * N_FEATURES
-    t[_F["has_credential_dump_cmd"]] = 1; t[_F["from_system32"]] = 1
-    t[_F["is_signed"]] = 1
-    blocks.append(_repeat(t, 120))
-
-    # PowerShell credential dump (comsvcs, minidump)
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["has_credential_dump_cmd"]] = 1
-    t[_F["is_signed"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # Cred dump + long cmd (mimikatz inline)
-    t = [0.0] * N_FEATURES
-    t[_F["has_credential_dump_cmd"]] = 1; t[_F["cmd_is_long"]] = 1
-    blocks.append(_repeat(t, 80))
-
-    return np.vstack(blocks)
-
-
-def _benign_samples() -> np.ndarray:
-    blocks = []
-
-    # Chrome / browser
-    t = [0.0] * N_FEATURES
-    t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 200))
-
-    # svchost (System32, signed)
-    t = [0.0] * N_FEATURES
-    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 200))
-
-    # explorer.exe
-    t = [0.0] * N_FEATURES
-    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 150))
-
-    # VS Code / IDE (Program Files, signed, some network)
-    t = [0.0] * N_FEATURES
-    t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 150))
-
-    # PowerShell normal (signed, System32, no flags, no connections)
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["from_system32"]] = 1
-    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 150))
-
-    # PowerShell admin (signed, some connections, no flags) — remote PS, WinRM, etc.
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["from_system32"]] = 1
-    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 150))
-
-    # PowerShell admin — moderate connections, still no behavioral flags
-    t = [0.0] * N_FEATURES
-    t[_F["is_powershell"]] = 1; t[_F["from_system32"]] = 1
-    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 120))
-
-    # Script host parent (cmd/PS spawning a benign child) — legitimate admin use
-    t = [0.0] * N_FEATURES
-    t[_F["is_script_host_parent"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["from_system32"]] = 1; t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 250))
-
-    # Script host parent spawning tool with 1 connection — common in admin scripts
-    t = [0.0] * N_FEATURES
-    t[_F["is_script_host_parent"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 200))
-
-    # Script host parent spawning unsigned tool — common (python.exe, etc.)
-    t = [0.0] * N_FEATURES
-    t[_F["is_script_host_parent"]] = 1; t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 150))
-
-    # Script host parent + moderate connections — no flags (automation scripts)
-    t = [0.0] * N_FEATURES
-    t[_F["is_script_host_parent"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 150))
-
-    # Notepad, calc, system utilities
-    t = [0.0] * N_FEATURES
-    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1
-    blocks.append(_repeat(t, 150))
-
-    # Teams / Slack / signed apps with network
-    t = [0.0] * N_FEATURES
-    t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 130))
-
-    # Electron apps outside Program Files (Discord, Spotify, etc.) — signed, some connections
-    t = [0.0] * N_FEATURES
-    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 150))
-
-    # Electron apps — signed, low connections
-    t = [0.0] * N_FEATURES
-    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 120))
-
-    # Python/Node dev tools — unsigned, outside system dirs, low connections
-    t = [0.0] * N_FEATURES
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 120))
-
-    # Python/Node dev tools — unsigned, moderate connections
-    t = [0.0] * N_FEATURES
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # Python/Node dev tools — unsigned, higher connections
-    t = [0.0] * N_FEATURES
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # Game launchers / user-installed apps (signed, AppData/local, network)
-    t = [0.0] * N_FEATURES
-    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 120))
-
-    # Signed updaters / background services — 1 connection
-    t = [0.0] * N_FEATURES
-    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 100))
-
-    # Unsigned background process — no connections (common for benign user procs)
-    t = [0.0] * N_FEATURES
-    t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 150))
-
-    # --- CRITICAL WINDOWS SYSTEM PROCESSES ---
-
-    # lsass.exe — always system32, signed, has network (auth traffic), no behavioral flags
-    t = [0.0] * N_FEATURES
-    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 250))
-
-    # System Idle Process / Memory Compression — unsigned, no path, may have connections
-    t = [0.0] * N_FEATURES
-    t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 200))
-
-    t = [0.0] * N_FEATURES
-    t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 150))
-
-    # csrss.exe, wininit.exe, smss.exe — system32, signed, no network
-    t = [0.0] * N_FEATURES
-    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 250))
-
-    # winlogon.exe, services.exe, spoolsv.exe — system32, signed, occasional network
-    t = [0.0] * N_FEATURES
-    t[_F["from_system32"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 200))
-
-    # --- DRIVER / PERIPHERAL PROCESSES (NVIDIA, Logitech, etc.) ---
-
-    # Signed driver services from Program Files with network (update checks, telemetry)
-    t = [0.0] * N_FEATURES
-    t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 1
-    blocks.append(_repeat(t, 200))
-
-    # Signed driver services — no network (display drivers, input devices)
-    t = [0.0] * N_FEATURES
-    t[_F["from_program_files"]] = 1; t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 150))
-
-    # Signed peripheral apps outside Program Files (Logitech G Hub, etc.)
-    t = [0.0] * N_FEATURES
-    t[_F["is_signed"]] = 1; t[_F["connection_count"]] = 0
-    blocks.append(_repeat(t, 150))
-
-    return np.vstack(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +61,8 @@ def _save_training_stats(
     n_test: int,  n_test_mal: int,  n_test_ben: int,
     n_test_scenarios: int, is_scenario_eval: bool,
     importances: dict[str, float],
+    roc_auc: float = 0.0,
+    avg_precision: float = 0.0,
 ) -> None:
     os.makedirs(_STATS_DIR, exist_ok=True)
 
@@ -416,7 +70,6 @@ def _save_training_stats(
     if os.path.exists(_STATS_CSV):
         with open(_STATS_CSV, newline="", encoding="utf-8") as f:
             existing = list(csv.DictReader(f))
-            # discard rows from an older schema
             if existing and "n_train" in existing[0]:
                 rows = existing
 
@@ -441,6 +94,8 @@ def _save_training_stats(
         "recall_ben":       round(ben.get("recall", 0), 4),
         "f1_ben":           round(ben.get("f1-score", 0), 4),
         "accuracy":         round(report.get("accuracy", 0), 4),
+        "roc_auc":          round(roc_auc, 4),
+        "avg_precision":    round(avg_precision, 4),
         "tn":               int(cm[0, 0]),
         "fp":               int(cm[0, 1]),
         "fn":               int(cm[1, 0]),
@@ -465,24 +120,24 @@ def _plot_training_curves(rows: list[dict]) -> None:
     import matplotlib.pyplot as plt
     import matplotlib.ticker as ticker
 
-    sessions = [int(r["session"]) for r in rows]
+    sessions      = [int(r["session"]) for r in rows]
     scenario_mask = [int(r.get("is_scenario_eval", 0)) for r in rows]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 9), sharex=True)
+    fig, axes = plt.subplots(3, 1, figsize=(10, 13), sharex=True)
+    ax1, ax2, ax3 = axes
     fig.patch.set_facecolor("#0d0d0d")
-    for ax in (ax1, ax2):
+    for ax in axes:
         ax.set_facecolor("#1a1a1a")
         ax.tick_params(colors="#cccccc")
         for spine in ax.spines.values():
             spine.set_color("#444444")
 
-    # ── top: test-set metrics (solid = scenario eval, dashed = train fallback) ──
+    # ── top: precision / recall / F1 ──
     prec = [float(r["precision_mal"]) for r in rows]
     rec  = [float(r["recall_mal"])    for r in rows]
     f1   = [float(r["f1_mal"])        for r in rows]
-    for i, (s, p, r, f, sc) in enumerate(zip(sessions, prec, rec, f1, scenario_mask)):
-        ls = "-" if sc else "--"
-        mk = "o" if sc else "s"
+    for s, p, r, f, sc in zip(sessions, prec, rec, f1, scenario_mask):
+        ls = "-"; mk = "o" if sc else "s"
         ax1.plot([s], [p], marker=mk, color="#4fc3f7", linestyle=ls, markersize=7, linewidth=2)
         ax1.plot([s], [r], marker=mk, color="#81c784", linestyle=ls, markersize=7, linewidth=2)
         ax1.plot([s], [f], marker=mk, color="#ffb74d", linestyle=ls, markersize=7, linewidth=2)
@@ -491,40 +146,98 @@ def _plot_training_curves(rows: list[dict]) -> None:
         ax1.plot(sessions, rec,  color="#81c784", linewidth=1.5, alpha=0.6)
         ax1.plot(sessions, f1,   color="#ffb74d", linewidth=1.5, alpha=0.6)
     from matplotlib.lines import Line2D
-    legend_els = [
+    ax1.legend(handles=[
         Line2D([0],[0], color="#4fc3f7", marker="o", label="Precision"),
         Line2D([0],[0], color="#81c784", marker="o", label="Recall"),
         Line2D([0],[0], color="#ffb74d", marker="o", label="F1"),
-        Line2D([0],[0], color="#888888", linestyle="-",  marker="o", label="Scenario eval"),
-        Line2D([0],[0], color="#888888", linestyle="--", marker="s", label="Train fallback"),
-    ]
+    ], facecolor="#2a2a2a", labelcolor="#cccccc", edgecolor="#444444", fontsize=8)
     ax1.set_ylabel("Score", color="#cccccc")
     ax1.set_ylim(0, 1.05)
-    ax1.set_title("Malicious class — held-out evaluation per session",
+    ax1.set_title("Malicious class — precision / recall / F1 per session",
                   color="#ffffff", pad=8)
-    ax1.legend(handles=legend_els, facecolor="#2a2a2a",
-               labelcolor="#cccccc", edgecolor="#444444", fontsize=8)
     ax1.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.2f"))
     ax1.grid(True, color="#333333", linestyle="--", alpha=0.6)
+
+    # ── middle: AUC-ROC and AUC-PR trend ──
+    roc_aucs = [float(r.get("roc_auc") or 0) for r in rows]
+    avg_precs = [float(r.get("avg_precision") or 0) for r in rows]
+    for s, ra, ap, sc in zip(sessions, roc_aucs, avg_precs, scenario_mask):
+        mk = "o" if sc else "s"
+        ax2.plot([s], [ra], marker=mk, color="#ce93d8", markersize=7, linewidth=2)
+        ax2.plot([s], [ap], marker=mk, color="#f48fb1", markersize=7, linewidth=2)
+    if len(sessions) > 1:
+        ax2.plot(sessions, roc_aucs,  color="#ce93d8", linewidth=1.5, alpha=0.6)
+        ax2.plot(sessions, avg_precs, color="#f48fb1", linewidth=1.5, alpha=0.6)
+    ax2.legend(handles=[
+        Line2D([0],[0], color="#ce93d8", marker="o", label="AUC-ROC"),
+        Line2D([0],[0], color="#f48fb1", marker="o", label="AUC-PR"),
+    ], facecolor="#2a2a2a", labelcolor="#cccccc", edgecolor="#444444", fontsize=8)
+    ax2.set_ylabel("Score", color="#cccccc")
+    ax2.set_ylim(0, 1.05)
+    ax2.set_title("AUC-ROC and AUC-PR per session", color="#ffffff", pad=8)
+    ax2.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.2f"))
+    ax2.grid(True, color="#333333", linestyle="--", alpha=0.6)
 
     # ── bottom: train vs test sample counts ──
     width = 0.2
     x = np.array(sessions, dtype=float)
-    ax2.bar(x - 1.5*width, [int(r["n_train_mal"]) for r in rows], width, color="#ef5350", alpha=0.85, label="Train mal")
-    ax2.bar(x - 0.5*width, [int(r["n_train_ben"]) for r in rows], width, color="#42a5f5", alpha=0.85, label="Train ben")
-    ax2.bar(x + 0.5*width, [int(r.get("n_test_mal", 0)) for r in rows], width, color="#ef9a9a", alpha=0.85, label="Test mal")
-    ax2.bar(x + 1.5*width, [int(r.get("n_test_ben", 0)) for r in rows], width, color="#90caf9", alpha=0.85, label="Test ben")
-    ax2.set_xlabel("Session", color="#cccccc")
-    ax2.set_ylabel("Samples", color="#cccccc")
-    ax2.set_title("Train / test sample counts per session", color="#ffffff", pad=8)
-    ax2.legend(facecolor="#2a2a2a", labelcolor="#cccccc", edgecolor="#444444", fontsize=8)
-    ax2.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-    ax2.grid(True, axis="y", color="#333333", linestyle="--", alpha=0.6)
+    ax3.bar(x - 1.5*width, [int(r["n_train_mal"]) for r in rows], width, color="#ef5350", alpha=0.85, label="Train mal")
+    ax3.bar(x - 0.5*width, [int(r["n_train_ben"]) for r in rows], width, color="#42a5f5", alpha=0.85, label="Train ben")
+    ax3.bar(x + 0.5*width, [int(r.get("n_test_mal", 0)) for r in rows], width, color="#ef9a9a", alpha=0.85, label="Test mal")
+    ax3.bar(x + 1.5*width, [int(r.get("n_test_ben", 0)) for r in rows], width, color="#90caf9", alpha=0.85, label="Test ben")
+    ax3.set_xlabel("Session", color="#cccccc")
+    ax3.set_ylabel("Samples", color="#cccccc")
+    ax3.set_title("Train / test sample counts per session", color="#ffffff", pad=8)
+    ax3.legend(facecolor="#2a2a2a", labelcolor="#cccccc", edgecolor="#444444", fontsize=8)
+    ax3.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax3.grid(True, axis="y", color="#333333", linestyle="--", alpha=0.6)
 
     plt.tight_layout(pad=2.0)
     plt.savefig(_STATS_GRAPH, dpi=150, bbox_inches="tight",
                 facecolor=fig.get_facecolor())
     plt.close(fig)
+
+
+def _plot_roc_pr(y_true: np.ndarray, y_proba: np.ndarray) -> None:
+    """Save ROC and PR curves for the most recent evaluation set."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fpr, tpr, _ = roc_curve(y_true, y_proba)
+    prec, rec, _ = precision_recall_curve(y_true, y_proba)
+    auc_roc = roc_auc_score(y_true, y_proba)
+    auc_pr  = average_precision_score(y_true, y_proba)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig.patch.set_facecolor("#0d0d0d")
+    for ax in (ax1, ax2):
+        ax.set_facecolor("#1a1a1a")
+        ax.tick_params(colors="#cccccc")
+        for spine in ax.spines.values():
+            spine.set_color("#444444")
+
+    ax1.plot(fpr, tpr, color="#4fc3f7", linewidth=2, label=f"AUC-ROC = {auc_roc:.3f}")
+    ax1.plot([0, 1], [0, 1], color="#555555", linestyle="--", linewidth=1)
+    ax1.set_xlabel("False Positive Rate", color="#cccccc")
+    ax1.set_ylabel("True Positive Rate", color="#cccccc")
+    ax1.set_title("ROC Curve", color="#ffffff", pad=8)
+    ax1.legend(facecolor="#2a2a2a", labelcolor="#cccccc", edgecolor="#444444")
+    ax1.grid(True, color="#333333", linestyle="--", alpha=0.6)
+
+    ax2.plot(rec, prec, color="#81c784", linewidth=2, label=f"AUC-PR = {auc_pr:.3f}")
+    ax2.axhline(y=y_true.mean(), color="#555555", linestyle="--", linewidth=1, label="Baseline")
+    ax2.set_xlabel("Recall", color="#cccccc")
+    ax2.set_ylabel("Precision", color="#cccccc")
+    ax2.set_title("Precision-Recall Curve", color="#ffffff", pad=8)
+    ax2.legend(facecolor="#2a2a2a", labelcolor="#cccccc", edgecolor="#444444")
+    ax2.grid(True, color="#333333", linestyle="--", alpha=0.6)
+
+    plt.tight_layout(pad=2.0)
+    plt.savefig(_ROC_PR_GRAPH, dpi=150, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print(f"[stats] ROC/PR     → {_ROC_PR_GRAPH}")
 
 
 def _plot_feature_importance(importances: dict[str, float]) -> None:
@@ -540,7 +253,7 @@ def _plot_feature_importance(importances: dict[str, float]) -> None:
     names  = [names[i]  for i in order]
     values = [values[i] for i in order]
 
-    fig, ax = plt.subplots(figsize=(9, 7))
+    fig, ax = plt.subplots(figsize=(9, 8))
     fig.patch.set_facecolor("#0d0d0d")
     ax.set_facecolor("#1a1a1a")
     ax.tick_params(colors="#cccccc")
@@ -565,17 +278,13 @@ def _plot_feature_importance(importances: dict[str, float]) -> None:
 
 class ProcessClassifier:
     def __init__(self):
-        self.rf: RandomForestClassifier | None = None
+        self.model: HistGradientBoostingClassifier | None = None
         self.scaler: StandardScaler | None = None
         self.calibrator = None
+        self._feature_importances: dict[str, float] = {}
 
     def train(self) -> None:
         from train import ATTACK_DIR, BENIGN_DIR, _load_folder
-
-        X_syn_mal = _malicious_samples()
-        X_syn_ben = _benign_samples()
-        y_syn_mal = np.ones(len(X_syn_mal),  dtype=int)
-        y_syn_ben = np.zeros(len(X_syn_ben), dtype=int)
 
         print("\n[classifier] Loading OTRF attack datasets …")
         X_atk, y_atk, scen_atk = _load_folder(ATTACK_DIR, fixed_label=1)
@@ -586,8 +295,8 @@ class ProcessClassifier:
         X_test_parts: list[np.ndarray] = []
         y_test_parts: list[np.ndarray] = []
         test_scens:   list[str]        = []
-        X_train_parts = [X_syn_mal, X_syn_ben]
-        y_train_parts = [y_syn_mal, y_syn_ben]
+        X_train_parts: list[np.ndarray] = []
+        y_train_parts: list[np.ndarray] = []
 
         def _scenario_split(X, y, scens, label_prefix=""):
             unique = list(set(scens))
@@ -628,42 +337,50 @@ class ProcessClassifier:
         self.scaler = StandardScaler()
         X_s = self.scaler.fit_transform(X_train)
 
-        # Reserve 10% of training data for isotonic calibration
-        X_s_rf, X_s_cal, y_rf, y_cal = _tts(
-            X_s, y_train, test_size=0.1, random_state=42, stratify=y_train
+        # Reserve 20% of training data for isotonic calibration
+        X_s_clf, X_s_cal, y_clf, y_cal = _tts(
+            X_s, y_train, test_size=0.20, random_state=42, stratify=y_train
         )
 
-        self.rf = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=14,
-            min_samples_leaf=2,
-            class_weight={0: 1, 1: 4},
+        # Class weights via sample_weight (HistGBT doesn't support class_weight param)
+        sw = np.where(y_clf == 1, 4.0, 1.0)
+
+        self.model = HistGradientBoostingClassifier(
+            max_iter=300,
+            max_depth=6,
+            learning_rate=0.05,
+            min_samples_leaf=10,
+            max_leaf_nodes=31,
             random_state=42,
-            n_jobs=-1,
         )
-        self.rf.fit(X_s_rf, y_rf)
+        self.model.fit(X_s_clf, y_clf, sample_weight=sw)
 
-        raw_cal = self.rf.predict_proba(X_s_cal)[:, 1]
+        raw_cal = self.model.predict_proba(X_s_cal)[:, 1]
         self.calibrator = IsotonicRegression(out_of_bounds="clip")
         self.calibrator.fit(raw_cal, y_cal)
 
+        # Permutation importance on calibration set (HistGBT has no split-based importances)
+        from sklearn.inspection import permutation_importance as _perm_imp
+        pi = _perm_imp(self.model, X_s_cal, y_cal, n_repeats=5, random_state=42, n_jobs=-1)
+        self._feature_importances = dict(zip(FEATURE_NAMES, pi.importances_mean.tolist()))
+
         has_test = X_test is not None and len(X_test) > 0
         if has_test:
-            X_te_s = self.scaler.transform(X_test)
-            raw_te  = self.rf.predict_proba(X_te_s)[:, 1]
+            X_te_s      = self.scaler.transform(X_test)
+            raw_te      = self.model.predict_proba(X_te_s)[:, 1]
             y_proba_cal = self.calibrator.predict(raw_te)
-            y_pred = (y_proba_cal >= 0.5).astype(int)
+            y_pred      = (y_proba_cal >= 0.5).astype(int)
             eval_y_true = y_test
-            header = "── Held-out scenario evaluation ──────────────────"
+            header      = "── Held-out scenario evaluation ──────────────────"
             if test_scenarios:
                 unique = sorted(set(test_scenarios))
                 print(f"\n[classifier] Test scenarios ({len(unique)}): {', '.join(unique)}")
         else:
-            raw_tr      = self.rf.predict_proba(X_s)[:, 1]
+            raw_tr      = self.model.predict_proba(X_s)[:, 1]
             y_proba_cal = self.calibrator.predict(raw_tr)
             y_pred      = (y_proba_cal >= 0.5).astype(int)
             eval_y_true = y_train
-            header     = "── Training-set evaluation (no held-out scenarios) ─"
+            header      = "── Training-set evaluation (no held-out scenarios) ─"
 
         report_str  = classification_report(eval_y_true, y_pred, target_names=["benign", "malicious"], digits=3, zero_division=0)
         report_dict = classification_report(eval_y_true, y_pred, target_names=["benign", "malicious"], output_dict=True, zero_division=0)
@@ -672,27 +389,37 @@ class ProcessClassifier:
         print(report_str)
         print(f"Confusion matrix:\n  TN={cm[0,0]}  FP={cm[0,1]}\n  FN={cm[1,0]}  TP={cm[1,1]}\n")
 
+        # AUC metrics (only meaningful with both classes present)
+        auc_roc = avg_prec = 0.0
+        if len(set(eval_y_true)) == 2:
+            auc_roc  = float(roc_auc_score(eval_y_true, y_proba_cal))
+            avg_prec = float(average_precision_score(eval_y_true, y_proba_cal))
+            print(f"AUC-ROC: {auc_roc:.4f}   AUC-PR: {avg_prec:.4f}\n")
+            if has_test:
+                _plot_roc_pr(eval_y_true, y_proba_cal)
+
         if has_test:
-            y_proba = y_proba_cal
             print("── Threshold analysis (operational view) ─────────")
-            for thr in (0.50, 0.60, 0.70, 0.80, 0.90):
-                y_t = (y_proba >= thr).astype(int)
+            for thr in (0.40, 0.50, 0.60, 0.70, 0.80, 0.90):
+                y_t = (y_proba_cal >= thr).astype(int)
                 tp = int(((y_t == 1) & (eval_y_true == 1)).sum())
                 fp = int(((y_t == 1) & (eval_y_true == 0)).sum())
                 fn = int(((y_t == 0) & (eval_y_true == 1)).sum())
-                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                rec  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                f1   = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-                print(f"  thr={thr:.2f}  prec={prec:.3f}  rec={rec:.3f}  f1={f1:.3f}  TP={tp}  FP={fp}  FN={fn}")
+                prec_t = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                rec_t  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1_t   = 2 * prec_t * rec_t / (prec_t + rec_t) if (prec_t + rec_t) > 0 else 0.0
+                print(f"  thr={thr:.2f}  prec={prec_t:.3f}  rec={rec_t:.3f}  f1={f1_t:.3f}  TP={tp}  FP={fp}  FN={fn}")
             print()
 
         os.makedirs(_MODEL_DIR, exist_ok=True)
-        joblib.dump(self.rf,         MODEL_PATH)
+        joblib.dump(self.model,      MODEL_PATH)
         joblib.dump(self.scaler,     SCALER_PATH)
         joblib.dump(self.calibrator, CALIBRATOR_PATH)
+        with open(_VER_FILE, "w") as f:
+            f.write(_MODEL_VER)
 
         n_train_mal = int(y_train.sum())
-        n_test      = len(X_test)  if has_test else 0
+        n_test      = len(X_test)       if has_test else 0
         n_test_mal  = int(y_test.sum()) if has_test else 0
         _save_training_stats(
             report_dict, cm,
@@ -701,11 +428,19 @@ class ProcessClassifier:
             len(set(test_scenarios)) if test_scenarios else 0,
             has_test,
             self.feature_importances(),
+            roc_auc=auc_roc,
+            avg_precision=avg_prec,
         )
 
     def load(self) -> None:
-        if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
-            self.rf     = joblib.load(MODEL_PATH)
+        # Support legacy RF model path for backward compatibility
+        path = MODEL_PATH
+        if not os.path.exists(path):
+            legacy = os.path.join(_MODEL_DIR, "voidwatch_rf.joblib")
+            if os.path.exists(legacy):
+                path = legacy
+        if os.path.exists(path) and os.path.exists(SCALER_PATH):
+            self.model  = joblib.load(path)
             self.scaler = joblib.load(SCALER_PATH)
             if os.path.exists(CALIBRATOR_PATH):
                 self.calibrator = joblib.load(CALIBRATOR_PATH)
@@ -713,12 +448,12 @@ class ProcessClassifier:
             logging.getLogger(__name__).warning("Model not found — run train.py to generate it")
 
     def predict_proba(self, proc) -> float:
-        if self.rf is None or self.scaler is None:
+        if self.model is None or self.scaler is None:
             return 0.0
         try:
             vec   = np.array([extract(proc)])
             vec_s = self.scaler.transform(vec)
-            raw   = float(self.rf.predict_proba(vec_s)[0][1])
+            raw   = float(self.model.predict_proba(vec_s)[0][1])
             if self.calibrator is not None:
                 return float(self.calibrator.predict(np.array([raw]))[0])
             return raw
@@ -726,9 +461,7 @@ class ProcessClassifier:
             return 0.0
 
     def feature_importances(self) -> dict[str, float]:
-        if self.rf is None:
-            return {}
-        return dict(zip(FEATURE_NAMES, self.rf.feature_importances_.tolist()))
+        return self._feature_importances
 
 
 classifier = ProcessClassifier()

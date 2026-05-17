@@ -401,9 +401,9 @@ def score_process(proc: ProcessData, all_procs: list[ProcessData], ml_proba: flo
     ctx_mod,    ctx_notes                = _context(proc)
     corr_bonus, corr_reasons, corr_mitre = _correlation(proc, all_procs)
 
-    # ML additive contribution: (proba - 0.55) × 50
-    #   proba=0.95 → +20, proba=0.75 → +10, proba=0.55 → 0, proba=0.30 → -12
-    ml_addon = round((ml_proba - 0.55) * 50)
+    # ML additive contribution: (proba - 0.40) × 50
+    #   proba=0.95 → +27, proba=0.70 → +15, proba=0.40 → 0, proba=0.20 → -10
+    ml_addon = round((ml_proba - 0.40) * 50)
     raw      = max(0.0, base_score + corr_bonus + ml_addon)
     adjusted = raw * conf_mod * ctx_mod
     final    = min(round(adjusted), 150)
