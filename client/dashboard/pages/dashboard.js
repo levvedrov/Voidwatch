@@ -16,17 +16,18 @@ export async function render(el) {
 
     const today = new Date().toDateString()
 
-    // All stats based on ML score only
-    const highToday  = alerts.filter(a => (a.ml_score ?? 0) >= 0.80 && new Date(a.timestamp).toDateString() === today).length
-    const highTotal  = alerts.filter(a => (a.ml_score ?? 0) >= 0.80).length
-    const avgMl      = alerts.length
-      ? Math.round(alerts.reduce((s, a) => s + (a.ml_score ?? 0), 0) / alerts.length * 100)
+    // All ML stats from procs so they're consistent with ML Distribution
+    const highProcsAll = procs.filter(p => (p.ml_score ?? 0) >= 0.80)
+    const highToday    = highProcsAll.filter(p => new Date(p.timestamp).toDateString() === today).length
+    const highTotal    = highProcsAll.length
+    const avgMl        = procs.length
+      ? Math.round(procs.reduce((s, p) => s + (p.ml_score ?? 0), 0) / procs.length * 100)
       : 0
 
     const latestAgent = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
     const lastSeen    = latestAgent ? ago(latestAgent.last_seen) : '—'
 
-    // ML Distribution from ALL current process records
+    // ML Distribution
     const dist = { LOW: 0, MEDIUM: 0, CRITICAL: 0 }
     procs.forEach(p => {
       const ml = p.ml_score ?? 0
@@ -41,15 +42,15 @@ export async function render(el) {
       { level: 'LOW',      label: 'Benign',  count: dist.LOW      },
     ]
 
-    // Active high-risk: use alerts (risk_score reflects full pipeline incl. context suppression)
+    // Active high-risk: deduplicate by process name, keep highest ml_score per name
     const highMap = {}
-    alerts.filter(a => (a.ml_score ?? 0) >= 0.80 && a.risk_score >= 50).forEach(a => {
-      const key = a.process_name.toLowerCase()
-      if (!highMap[key] || a.risk_score > highMap[key].risk_score)
-        highMap[key] = a
+    highProcsAll.forEach(p => {
+      const key = (p.name || '').toLowerCase()
+      if (!highMap[key] || (p.ml_score ?? 0) > (highMap[key].ml_score ?? 0))
+        highMap[key] = p
     })
     const highProcs = Object.values(highMap)
-      .sort((a, b) => b.risk_score - a.risk_score)
+      .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))
       .slice(0, 12)
 
     el.innerHTML = `
@@ -97,7 +98,7 @@ export async function render(el) {
                   const c  = mlColor(ml)
                   return `<tr class="row-${mlLevel(p.ml_score ?? 0)}">
                     <td><span class="risk-dot" style="background:${c}"></span></td>
-                    <td class="proc-name">${esc(p.process_name)}</td>
+                    <td class="proc-name">${esc(p.name || '—')}</td>
                     <td style="color:var(--text-muted)">${esc(p.parent_name || '—')}</td>
                     <td style="color:var(--text-muted);font-size:11px;font-family:var(--font-mono)">${esc(p.agent_id)}</td>
                     <td style="font-family:var(--font-mono);font-weight:700;color:${c}">${ml}%</td>
