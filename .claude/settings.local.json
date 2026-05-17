@@ -54,7 +54,13 @@
       "PowerShell(Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force)",
       "PowerShell(Get-ExecutionPolicy -Scope CurrentUser)",
       "Bash(cmd /c \"npm start\")",
-      "Bash(node node_modules/electron/index.js)"
+      "Bash(node node_modules/electron/index.js)",
+      "Bash(git rm *)",
+      "Bash(git mv *)",
+      "Bash(cp -r agent/. client/agent/)",
+      "Bash(cp -r dashboard/. client/dashboard/)",
+      "Bash(cp -r backend/. server/backend/)",
+      "Bash(git add *)"
     ]
   }
 }

@@ -1,5 +1,3 @@
-
-
 # Python
 __pycache__/
 *.pyc
@@ -10,28 +8,27 @@ venv/
 *.egg-info/
 
 # ML model & database (generated at runtime)
-backend/voidwatch.db
-backend/voidwatch.db-wal
-backend/voidwatch.db-shm
-backend/model/
+server/backend/voidwatch.db
+server/backend/voidwatch.db-wal
+server/backend/voidwatch.db-shm
+server/backend/model/
 *.joblib
 
 # Generated stats & graphs
-backend/stats/
+server/backend/stats/
 
-# Raw datasets (large files, use download instructions)
-backend/datasets/otrf/attack/
-tools/collector/data/
+# Raw datasets (large binary files, download separately)
+# server/model/datasets/otrf/attack/   ← tracked intentionally as ground-truth labels
 
-# Agent ID (machine-specific)
-agent/.agent_id
+# Agent credentials (machine-specific, never commit)
+client/agent/.agent_id
+client/agent/.agent_secret
+client/agent/config.json
 
 # Node
-dashboard/node_modules/
-
-# Electron build output
-dashboard/dist/
-dashboard/out/
+client/dashboard/node_modules/
+client/dashboard/dist/
+client/dashboard/out/
 
 # Secrets
 .env

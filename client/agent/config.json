@@ -1,0 +1,9 @@
+{
+  "server_url": "http://localhost:8000",
+  "api_key": "",
+  "mode": "detect",
+  "collection_interval": 10,
+  "collect_command_line": true,
+  "collect_network": true,
+  "anonymize_paths": false
+}

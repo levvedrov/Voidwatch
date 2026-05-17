@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src http: https:; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>Voidwatch</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <span class="titlebar-logo">VOIDWATCH</span>
+      <nav class="titlebar-nav">
+        <a href="#/dashboard" class="nav-tab" data-page="dashboard">Dashboard</a>
+        <a href="#/processes" class="nav-tab" data-page="processes">Processes</a>
+        <a href="#/alerts"    class="nav-tab" data-page="alerts">Alerts</a>
+        <a href="#/mitre"     class="nav-tab" data-page="mitre">MITRE ATT&amp;CK</a>
+        <a href="#/agents"    class="nav-tab" data-page="agents">Agents</a>
+        <a href="#/allowlist" class="nav-tab" data-page="allowlist">Allowlist</a>
+        <a href="#/settings"  class="nav-tab" data-page="settings">Settings</a>
+      </nav>
+    </div>
+    <div class="titlebar-right">
+      <span class="conn-status" id="conn-status"></span>
+      <div class="win-controls">
+        <button class="wbtn wbtn-min" id="btn-minimize">&#8722;</button>
+        <button class="wbtn wbtn-max" id="btn-maximize">&#9633;</button>
+        <button class="wbtn wbtn-close" id="btn-close">&#215;</button>
+      </div>
+    </div>
+  </div>
+
+  <main class="content" id="content"></main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

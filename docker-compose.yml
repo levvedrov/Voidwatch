@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  backend:
+    build: .
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/voidwatch.db}
+      - HOST=0.0.0.0
+      - PORT=8000
+      - VOIDWATCH_API_KEY=${VOIDWATCH_API_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    volumes:
+      - voidwatch_data:/app/data
+      - voidwatch_models:/app/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Optional: PostgreSQL — uncomment and set DATABASE_URL=postgresql://voidwatch:changeme@db:5432/voidwatch
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_DB: voidwatch
+  #     POSTGRES_USER: voidwatch
+  #     POSTGRES_PASSWORD: changeme
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U voidwatch"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  voidwatch_data:
+  voidwatch_models:
+  # postgres_data:
