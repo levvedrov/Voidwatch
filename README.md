@@ -33,11 +33,11 @@ Voidwatch is currently a **research / startup prototype** focused on endpoint vi
 
 Add or replace these screenshots before publishing the repository:
 
-```md
+
 ![Dashboard](docs/screenshots/dashboard.png)
 ![Processes](docs/screenshots/processes.png)
 ![Alerts](docs/screenshots/alerts.png)
-```
+
 
 ---
 
