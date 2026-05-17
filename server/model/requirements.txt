@@ -1,0 +1,7 @@
+# Training tools — install server/backend/requirements.txt first, then this file.
+# pip install -r server/backend/requirements.txt -r server/model/requirements.txt
+
+psutil>=5.9.0       # collect_benign.py: snapshot running processes
+
+# EVTX parser — only needed if using convert_evtx.py with raw .evtx files
+# pip install evtx
