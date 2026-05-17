@@ -60,7 +60,11 @@
       "Bash(cp -r agent/. client/agent/)",
       "Bash(cp -r dashboard/. client/dashboard/)",
       "Bash(cp -r backend/. server/backend/)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(awk -F: '{print $2}')",
+      "Bash(awk '{print $2}')",
+      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\(json.dumps\\(p.get\\('scripts',{}\\), indent=2\\)\\)\")"
     ]
   }
 }

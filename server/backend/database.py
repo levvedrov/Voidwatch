@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
@@ -140,8 +140,32 @@ class Allowlist(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+def _migrate(conn):
+    """Add columns that exist in the ORM but not yet in the DB (SQLite has no IF NOT EXISTS for columns)."""
+    migrations = [
+        ("agents",           "mode",         "TEXT DEFAULT 'detect'"),
+        ("agents",           "agent_secret",  "TEXT"),
+        ("alert_feedback",   "agent_id",      "TEXT"),
+        ("alert_feedback",   "process_name",  "TEXT"),
+        ("alerts",           "ml_score",      "REAL DEFAULT 0"),
+        ("alerts",           "timeline",      "TEXT"),
+        ("processes",        "ml_score",      "REAL DEFAULT 0"),
+    ]
+    existing: dict[str, set[str]] = {}
+    for table, col, typedef in migrations:
+        if table not in existing:
+            rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            existing[table] = {r[1] for r in rows}
+        if col not in existing[table]:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
+            existing[table].add(col)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        _migrate(conn)
+        conn.commit()
 
 
 def get_db():

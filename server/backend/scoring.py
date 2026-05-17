@@ -467,7 +467,7 @@ def _is_allowlisted(proc: ProcessData, names: set[str], hashes: set[str], patter
     return False
 
 
-def score_batch(agent_id: str, processes: list[ProcessData], db=None) -> list[dict]:
+def score_batch(agent_id: str, processes: list[ProcessData], db=None, ml_enabled: bool = True) -> list[dict]:
     from classifier import classifier
 
     al_names, al_hashes, al_patterns = _build_allowlist_sets(db) if db is not None else (set(), set(), [])
@@ -477,7 +477,7 @@ def score_batch(agent_id: str, processes: list[ProcessData], db=None) -> list[di
         if _is_allowlisted(proc, al_names, al_hashes, al_patterns):
             continue
 
-        ml_proba = classifier.predict_proba(proc)
+        ml_proba = classifier.predict_proba(proc) if ml_enabled else 0.0
         result = score_process(proc, processes, ml_proba=ml_proba)
 
         if result["risk_score"] >= ALERT_THRESHOLD:

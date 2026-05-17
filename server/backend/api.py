@@ -22,6 +22,7 @@ from models import (AgentModePayload, AgentOut, AlertOut, AllowlistEntry,
 from scoring import score_batch
 from classifier import classifier
 import settings as _cfg
+import license as _lic
 
 
 def _safe_proba(proc) -> float:
@@ -164,7 +165,8 @@ def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
         db.commit()
         return {"received": len(payload.processes), "alerts_generated": 0, "mode": "collect_only"}
 
-    alerts = score_batch(payload.agent_id, payload.processes, db=db)
+    alerts = score_batch(payload.agent_id, payload.processes, db=db,
+                         ml_enabled=_lic.license.can("ml"))
     cutoff  = ts - _DEDUP_WINDOW
     added   = 0
     for a in alerts:
@@ -283,7 +285,7 @@ def get_timeline(
 
 @router.get("/settings")
 def get_settings():
-    return _cfg.load()
+    return {**_cfg.load(), "license": _lic.license.to_dict()}
 
 
 @router.put("/settings", dependencies=[Depends(_check_auth)])
@@ -409,6 +411,7 @@ def revoke_agent(agent_id: str, reason: str = "", db: Session = Depends(get_db))
 
 @router.post("/alerts/{alert_id}/feedback", dependencies=[Depends(_check_auth)])
 def submit_feedback(alert_id: int, payload: FeedbackPayload, db: Session = Depends(get_db)):
+    _lic.license.require("feedback")
     valid = {"true_positive", "false_positive", "ignore", "suspicious_ok"}
     if payload.feedback_type not in valid:
         raise HTTPException(status_code=400, detail=f"feedback_type must be one of {valid}")
@@ -450,6 +453,7 @@ def get_allowlist(db: Session = Depends(get_db)):
 
 @router.post("/allowlist", response_model=AllowlistOut, dependencies=[Depends(_check_auth)])
 def add_allowlist(entry: AllowlistEntry, db: Session = Depends(get_db)):
+    _lic.license.require("allowlist")
     valid = {"process", "publisher", "path", "hash", "parent_child"}
     if entry.kind not in valid:
         raise HTTPException(status_code=400, detail=f"kind must be one of {valid}")
@@ -480,6 +484,7 @@ def export_alerts_csv(
     agent_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
+    _lic.license.require("export")
     q = db.query(AlertRecord)
     if agent_id:
         q = q.filter(AlertRecord.agent_id == agent_id)
@@ -506,6 +511,7 @@ def export_telemetry_csv(
     agent_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
+    _lic.license.require("export")
     q = db.query(ProcessRecord)
     if agent_id:
         q = q.filter(ProcessRecord.agent_id == agent_id)

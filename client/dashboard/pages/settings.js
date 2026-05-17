@@ -4,9 +4,10 @@ export async function render(el) {
   el.innerHTML = '<div class="empty">Loading…</div>'
 
   // Load stats but don't fail the whole page if server is unreachable
-  let cfg = { process_retain_days: 7, alert_retain_days: 30 }
+  let cfg = { process_retain_days: 7, alert_retain_days: 30, license: null }
   let stats = { db_size_mb: 0, db_type: '—', process_records: 0, alert_records: 0 }
   try { [cfg, stats] = await Promise.all([api.getSettings(), api.getStats()]) } catch {}
+  const lic = cfg.license || { tier: 'free', display: 'Free', features: [], customer: '', expires: null }
 
   const currentUrl = localStorage.getItem('voidwatch_server_url') || 'http://localhost:8000'
   const currentKey = localStorage.getItem('voidwatch_api_key') || ''
@@ -91,6 +92,28 @@ export async function render(el) {
             <button class="action-btn" id="btn-savekey">Save Key</button>
             <span id="msg-key" style="font-size:12px;color:var(--low);display:none">Saved</span>
           </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">License</div>
+        <div style="padding:20px;display:flex;flex-direction:column;gap:10px">
+          <div class="settings-stat-row">
+            <span>Tier</span>
+            <span style="font-family:var(--font-mono);font-size:11px;color:${lic.tier === 'free' ? 'var(--text-muted)' : '#22c55e'}">${esc(lic.display)}</span>
+          </div>
+          ${lic.customer ? `<div class="settings-stat-row"><span>Customer</span><span>${esc(lic.customer)}</span></div>` : ''}
+          ${lic.expires  ? `<div class="settings-stat-row"><span>Expires</span><span style="font-size:11px">${esc(lic.expires.slice(0,10))}</span></div>` : ''}
+          <div class="settings-stat-row">
+            <span>Features</span>
+            <span style="font-size:11px;color:var(--text-sec)">
+              ${lic.features.length ? lic.features.join(', ') : 'rules only'}
+            </span>
+          </div>
+          ${lic.tier === 'free' ? `
+          <div style="margin-top:6px;font-size:11px;color:var(--text-muted)">
+            Set <code>VOIDWATCH_LICENSE_KEY</code> in <code>.env</code> to unlock Pro features.
+          </div>` : ''}
         </div>
       </div>
 
