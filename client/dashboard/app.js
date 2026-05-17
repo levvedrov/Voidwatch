@@ -102,6 +102,15 @@ async function startup() {
     return
   }
 
+  // Check license — show activation screen if Free tier
+  try {
+    const cfg = await api.getSettings()
+    if (cfg.license?.tier === 'free') {
+      setBar('done', '')
+      await showLicenseScreen()
+    }
+  } catch {}
+
   setBar('loading', 'Waiting for agent...')
   const agentReady = await poll(async () => {
     const agents = await api.agents()
@@ -111,11 +120,73 @@ async function startup() {
   }, 25_000, 10_000)
 
   setBar('done', agentReady ? 'Agent online' : 'No agent detected')
-  await new Promise(r => setTimeout(r, 380))   // let green bar be visible
-  content.style.opacity = '0'                  // fade loading screen out
-  await new Promise(r => setTimeout(r, 140))   // wait for .content transition (0.12s)
-  content.innerHTML = ''                        // clear; dashboard renders into empty invisible area
-  route()                                       // renders, then fades to opacity 1
+  await new Promise(r => setTimeout(r, 380))
+  content.style.opacity = '0'
+  await new Promise(r => setTimeout(r, 140))
+  content.innerHTML = ''
+  route()
+}
+
+function showLicenseScreen() {
+  return new Promise(resolve => {
+    content.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:400px">
+        <div style="width:480px;display:flex;flex-direction:column;gap:20px">
+          <div>
+            <div style="font-size:22px;font-weight:700;letter-spacing:.04em">VOIDWATCH</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Activate your license to unlock all features</div>
+          </div>
+          <textarea id="lic-input" rows="5" placeholder="Paste your license key here…"
+            style="width:100%;padding:10px 12px;background:#0d0d1a;border:1px solid var(--border);
+                   border-radius:6px;color:inherit;font-family:var(--font-mono);font-size:11px;
+                   resize:none;line-height:1.5;box-sizing:border-box"></textarea>
+          <div id="lic-err" style="font-size:12px;color:#ef4444;min-height:16px"></div>
+          <div style="display:flex;gap:10px">
+            <button id="lic-activate"
+              style="flex:1;padding:10px;background:#22c55e22;color:#22c55e;
+                     border:1px solid #22c55e44;border-radius:5px;font-size:13px;cursor:pointer">
+              Activate
+            </button>
+            <button id="lic-skip"
+              style="padding:10px 20px;background:transparent;color:var(--text-muted);
+                     border:1px solid var(--border);border-radius:5px;font-size:13px;cursor:pointer">
+              Skip — use Free tier
+            </button>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);line-height:1.6">
+            Free tier: rule-based detection only, 7-day retention.<br>
+            Pro / Enterprise: ML scoring, CSV export, feedback, allowlist, longer retention.
+          </div>
+        </div>
+      </div>
+    `
+    content.style.opacity = '1'
+
+    content.querySelector('#lic-skip').addEventListener('click', () => {
+      content.style.opacity = '0'
+      setTimeout(resolve, 140)
+    })
+
+    content.querySelector('#lic-activate').addEventListener('click', async () => {
+      const key = content.querySelector('#lic-input').value.trim()
+      const err = content.querySelector('#lic-err')
+      const btn = content.querySelector('#lic-activate')
+      if (!key) { err.textContent = 'Please paste your license key.'; return }
+      btn.textContent = 'Activating…'
+      btn.disabled = true
+      try {
+        const lic = await api.activateLicense(key)
+        err.style.color = '#22c55e'
+        err.textContent = `✓ Activated — ${lic.display} tier${lic.customer ? ' · ' + lic.customer : ''}`
+        setTimeout(() => { content.style.opacity = '0'; setTimeout(resolve, 140) }, 1200)
+      } catch (e) {
+        err.style.color = '#ef4444'
+        err.textContent = e.message || 'Invalid key'
+        btn.textContent = 'Activate'
+        btn.disabled = false
+      }
+    })
+  })
 }
 
 // ── Boot ─────────────────────────────────────────────────────

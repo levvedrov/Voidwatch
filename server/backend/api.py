@@ -47,6 +47,28 @@ def health():
     return {"status": "ok"}
 
 
+@router.post("/license/activate")
+def license_activate(payload: dict):
+    raw = (payload.get("key") or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="No key provided")
+    try:
+        lic = _lic.activate(raw)
+        return lic.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.delete("/license", dependencies=[Depends(_check_auth)])
+def license_deactivate():
+    from license import _LICENSE_FILE, _free
+    import license as _license_mod
+    if _LICENSE_FILE.exists():
+        _LICENSE_FILE.unlink()
+    _license_mod.license = _free()
+    return {"tier": "free"}
+
+
 def _check_auth(
     x_api_key: str = Header(default=""),
     x_agent_id: str = Header(default=""),

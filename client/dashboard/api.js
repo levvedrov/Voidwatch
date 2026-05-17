@@ -55,6 +55,8 @@ export const api = {
   agents()                  { return get('/agents') },
   timeline(params = {})     { return get('/timeline?'  + new URLSearchParams(params)) },
   getSettings()             { return get('/settings') },
+  activateLicense(key)      { return post('/license/activate', { key }) },
+  deactivateLicense()       { return del('/license') },
   getStats()                { return get('/settings/stats') },
   saveSettings(data)        { return put('/settings', data) },
   pruneNow()                { return post('/settings/prune') },

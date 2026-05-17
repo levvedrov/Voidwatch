@@ -34,6 +34,10 @@ client/dashboard/out/
 .env
 *.env
 
+# License keys (private key must never be committed)
+server/license_private.pem
+server/backend/license.json
+
 # OS
 .DS_Store
 Thumbs.db
