@@ -31,7 +31,6 @@ Voidwatch is currently a **research / startup prototype** focused on endpoint vi
 
 ## Screenshots
 
-Add or replace these screenshots before publishing the repository:
 
 
 ![Dashboard](docs/screenshots/dashboard.png)
