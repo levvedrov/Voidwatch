@@ -64,7 +64,8 @@
       "Bash(git commit -m ' *)",
       "Bash(awk -F: '{print $2}')",
       "Bash(awk '{print $2}')",
-      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\(json.dumps\\(p.get\\('scripts',{}\\), indent=2\\)\\)\")"
+      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\(json.dumps\\(p.get\\('scripts',{}\\), indent=2\\)\\)\")",
+      "Bash(python server/issue_license.py pro \"Test Customer\" 2027-01-01)"
     ]
   }
 }

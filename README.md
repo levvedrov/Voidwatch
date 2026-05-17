@@ -1,278 +1,606 @@
 # Voidwatch
 
-Windows endpoint detection and response system. A lightweight Python agent collects process and network telemetry every 5 seconds and sends it to a FastAPI backend, which scores each process through a hybrid pipeline — a MITRE ATT&CK-mapped rule engine combined with a calibrated RandomForest classifier. Threats are surfaced in an Electron dashboard with real-time updates.
+**Voidwatch** is a lightweight AI-assisted endpoint behavior monitoring platform for Windows. It collects process and network telemetry, analyzes suspicious behavior with a hybrid detection pipeline, and displays alerts in a desktop dashboard.
+
+Voidwatch is currently a **research / startup prototype** focused on endpoint visibility, explainable alerts, false-positive reduction, and safe private beta testing.
+
+> **Status:** Prototype / private beta preparation  
+> **Target users:** cybersecurity labs, student security teams, developers, small teams, and early-stage startups  
+> **Platform:** Windows endpoints, FastAPI backend, Electron dashboard
+
+---
+
+## Key Features
+
+- Windows endpoint agent for process and network telemetry
+- FastAPI backend for telemetry ingestion and scoring
+- Electron dashboard for agents, processes, alerts, settings, and feedback
+- Hybrid detection engine:
+  - MITRE ATT&CK-inspired rule engine
+  - machine learning classifier
+  - context suppression for known-good processes
+- Agent enrollment with per-agent secrets
+- `collect_only` mode for safe benign-data collection
+- Alert feedback system for true/false positive labeling
+- Allowlist support for trusted processes, publishers, paths, hashes, and parent-child pairs
+- CSV report export for alerts and telemetry
+- Privacy and data-collection documentation
+- Docker/PostgreSQL-ready direction for private beta deployment
 
 ---
 
 ## Screenshots
 
+Add or replace these screenshots before publishing the repository:
+
+```md
 ![Dashboard](docs/screenshots/dashboard.png)
 ![Processes](docs/screenshots/processes.png)
 ![Alerts](docs/screenshots/alerts.png)
-![Training Stats](backend/stats/training_curves.png)
+```
 
 ---
 
 ## Architecture
 
+```text
+Windows Agent / Collector
+        ↓
+FastAPI Backend
+        ↓
+Database: SQLite for prototype / PostgreSQL for beta
+        ↓
+Detection Engine
+        ├── Rule-based scoring
+        ├── ML classifier
+        ├── Allowlist checks
+        └── Alert generation
+        ↓
+Electron Dashboard
+        ├── Agents
+        ├── Processes
+        ├── Alerts
+        ├── Feedback
+        ├── Reports
+        └── Settings
 ```
-┌──────────────────────────────────────────────────────┐
-│                    Backend Server                     │
-│                                                       │
-│  FastAPI  ──►  SQLAlchemy ORM  ──►  PostgreSQL/SQLite │
-│                                                       │
-│  /telemetry  ──►  score_batch()                       │
-│                     ├── rule_engine()   (0–100 pts)   │
-│                     └── classifier()   (+0–50 pts)    │
-│                           ├── RF.predict_proba()      │
-│                           └── IsotonicRegression()    │
-└───────────────────────────┬──────────────────────────┘
-                            │ HTTP REST
-            ┌───────────────┴───────────────┐
-            │                               │
-     ┌──────▼──────┐                 ┌──────▼──────┐
-     │  Dashboard   │                 │  Dashboard   │
-     │  (Electron)  │                 │  (Electron)  │
-     │  + Agent     │                 │  + Agent     │
-     │  (Python)    │                 │  (Python)    │
-     └─────────────┘                 └─────────────┘
-```
 
-**Backend** binds `0.0.0.0`, configured entirely via environment variables. Supports any number of simultaneous agents.
+### Main Components
 
-**Agent** runs as a subprocess spawned by the dashboard on launch. Collects process list + per-process network connections via `psutil`, sends telemetry batches to the backend every 5 seconds. Sends a heartbeat on each cycle before collection completes.
-
-**Dashboard** is an Electron app. Server URL is stored in `userData/voidwatch-config.json` and synced to `localStorage` on startup. All API calls use the stored URL dynamically — no hardcoded base address.
+| Component | Description |
+|---|---|
+| `client/agent` | Windows agent that collects process and network telemetry |
+| `client/dashboard` | Electron dashboard for monitoring and analysis |
+| `server/backend` | FastAPI backend, database models, API routes, scoring, reports |
+| `server/model` | Training pipeline, feature extraction, datasets, evaluation tools |
+| `tools/collector` | Standalone benign-data collector for external testers |
+| `docs` | Privacy, data collection, security, and deployment documentation |
 
 ---
 
-## Scoring Pipeline
+## Detection Pipeline
 
-Each telemetry batch goes through `score_batch()` in `scoring.py`:
+Voidwatch uses a hybrid detection approach.
 
-### 1. Rule Engine (`0–100 pts`)
+### 1. Rule-Based Detection
 
-Evaluates deterministic behavioral rules mapped to MITRE ATT&CK techniques:
+The rule engine assigns risk points based on suspicious endpoint behavior, such as:
 
-| Rule | Points | Technique |
-|---|---|---|
-| Encoded PowerShell (`-enc`, `-EncodedCommand`) | 35 | T1027.010 |
-| `IEX` / `Invoke-Expression` | 30 | T1059.001 |
-| Execution policy bypass | 25 | T1059.001 |
-| Download cradle (`WebClient`, `wget`, `curl`) | 30 | T1105 |
-| Hidden window (`-WindowStyle Hidden`) | 20 | T1059.001 |
-| Office app spawning shell | 40 | T1566 |
-| Browser spawning shell | 35 | T1204 |
-| `mshta.exe` with network | 40 | T1218.005 |
-| `rundll32.exe` with network | 35 | T1218.011 |
-| `regsvr32.exe` with network | 35 | T1218.010 |
-| `certutil.exe` download | 40 | T1105 |
-| Registry persistence | 40 | T1547.001 |
-| Scheduled task creation | 35 | T1053.005 |
-| Suspicious port (4444, 1337, 31337…) | 30 | T1071 |
-| Temp/Downloads execution | 20 | T1204 |
+- encoded PowerShell commands
+- execution-policy bypass
+- download cradle behavior
+- Office applications spawning shells
+- browsers spawning shells
+- suspicious LOLBins such as `mshta.exe`, `rundll32.exe`, `regsvr32.exe`, and `certutil.exe`
+- execution from user-writable paths such as Temp, Downloads, or AppData
+- suspicious network connections
+- registry persistence indicators
+- scheduled-task creation indicators
 
-### 2. ML Additive (`+0–50 pts`)
+Rules are designed to be explainable. Alerts should show **why** a process was considered suspicious, not only a numeric score.
 
-```python
-ml_addon = round((ml_proba - 0.55) * 50)  # only adds if proba > 0.55
-risk_score = rule_score + max(0, ml_addon)
-```
+### 2. Machine Learning Classifier
 
-### 3. Context Modifier
+The ML pipeline is designed to classify process behavior using extracted behavioral features.
 
-Multipliers applied before final score to suppress known-good processes:
+The current training direction uses:
 
-| Class | Multiplier | Examples |
-|---|---|---|
-| Critical system | `× 0.05` | lsass, csrss, wininit, smss, winlogon |
-| Driver processes | `× 0.10` | nvdisplay, lghub, corsairservice, msiafterburner |
-| Security software | `× 0.20` | MsMpEng, SecurityHealthService |
-| Known browsers | `× 0.40` | chrome, msedge, firefox |
-| Dev tools | `× 0.50` | code, python, node, git |
+- scenario-based evaluation
+- cleaned attack labels
+- benign collector data
+- calibrated probability output
+- precision, recall, F1, AUC-ROC, and AUC-PR tracking
 
-Final `risk_score >= 50` → alert generated and stored in `AlertRecord`.
+Important feature groups include:
 
----
+- process identity features
+- parent-child relationship features
+- command-line behavior features
+- suspicious token counts
+- path-category features
+- network behavior features
+- discovery / lateral movement / credential-access indicators
+- signing and context features when available
 
-## ML Classifier
+### 3. Context Suppression
 
-**Model:** `sklearn.ensemble.RandomForestClassifier`
-- `n_estimators=200`, `max_depth=14`, `min_samples_leaf=2`
-- `class_weight={0: 1, 1: 4}`
+Voidwatch reduces risk for known-good or sensitive process categories, such as:
 
-**Calibration:** `sklearn.isotonic.IsotonicRegression`
-- 10% of training data held out for calibration
-- Applied post-hoc to RF raw probabilities
+- critical Windows system processes
+- Microsoft Defender and security services
+- known browsers
+- developer tools
+- trusted publishers and paths
 
-**Training data:**
-- [OTRF Security Datasets](https://github.com/OTRF) — 100+ real attack scenarios (ZIP/tar.gz)
-- Benign: process snapshots collected from live Windows machines via `collect_benign.py`
-- Synthetic: hand-crafted feature vectors for edge cases (signed LOLBINs, critical system processes, driver processes)
+This is important for reducing false positives in real environments.
 
-**Train/test split:** `GroupShuffleSplit` on scenario groups — entire attack scenarios go to either train or test, never split across both.
+### 4. Allowlist Layer
 
-**Features (31 total):**
+The allowlist can suppress trusted activity by:
 
-```
-is_powershell         has_encoded_cmd        has_download_cmd
-has_iex               has_ep_bypass          has_hidden_window
-is_mshta              is_rundll32            is_regsvr32
-is_certutil           is_office_parent       is_browser_parent
-is_script_host_parent from_temp              from_downloads
-from_appdata_roaming  from_system32          from_program_files
-is_signed             connection_count       has_suspicious_port
-has_registry_persist  has_sched_task         is_known_dev_tool
-is_known_browser      cmd_is_long            suspicious_flag_count
-uses_common_dev_port  has_discovery_cmd      has_lateral_movement_cmd
-has_credential_dump_cmd
-```
+- process name
+- publisher
+- path
+- hash
+- parent-child pair
 
-`suspicious_flag_count` is a normalized composite: sum of 9 independent behavioral flags divided by 9.
-
-`has_credential_dump_cmd` excludes critical system processes from self-matching on their own name in the command line path.
+This allows beta users or administrators to mark known-safe behavior and reduce alert noise.
 
 ---
 
-## REST API
+## Data Collection and Privacy
 
-All endpoints except `/health` and `GET /settings` require `X-API-Key` header when `VOIDWATCH_API_KEY` is set.
+Voidwatch is designed to collect technical endpoint telemetry, not personal content.
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/health` | Liveness check |
-| `POST` | `/register` | Agent registration + metadata |
-| `POST` | `/telemetry` | Process batch ingestion + scoring |
-| `GET` | `/processes` | Query process records |
-| `GET` | `/alerts` | Query alert records |
-| `GET` | `/agents` | List registered agents |
-| `GET` | `/timeline` | Flattened alert event timeline |
-| `GET` | `/settings` | Runtime settings |
-| `PUT` | `/settings` | Update retention config |
-| `GET` | `/settings/stats` | DB record counts + size |
-| `POST` | `/settings/prune` | Manual retention prune |
+### Collected Data
 
-Alert deduplication: identical `(agent_id, process_name, risk_level)` within 10 minutes is dropped.
+Depending on configuration, the agent or collector may collect:
+
+- process name
+- process path
+- parent process
+- command line
+- process ID and parent process ID
+- network connection status
+- destination IP and port
+- protocol / connection type
+- digital signature status and publisher, if available
+- timestamps
+- agent ID / host metadata
+
+### Not Collected
+
+Voidwatch should **not** collect:
+
+- passwords
+- browser cookies
+- browser history contents
+- private messages
+- screenshots
+- keystrokes
+- files or document contents
+- tokens or secrets intentionally
+
+For beta testing and benign-data collection, path anonymization should be enabled whenever possible.
+
+Read more:
+
+```text
+docs/PRIVACY.md
+docs/DATA_COLLECTION.md
+docs/SECURITY.md
+```
+
+---
+
+## Private Beta Modes
+
+Voidwatch supports different operating modes.
+
+| Mode | Purpose |
+|---|---|
+| `collect_only` | Collect telemetry without generating alerts; useful for benign data collection |
+| `detect` | Collect telemetry and generate alerts |
+| `debug` | Verbose local testing and troubleshooting |
+
+For first external testers, use `collect_only` mode to build a clean benign dataset safely.
 
 ---
 
 ## Quick Start
 
-### Backend
+> The exact paths may differ depending on your branch. Adjust commands if your folders are named differently.
+
+### 1. Clone the Repository
 
 ```bash
-cd backend
+git clone https://github.com/<your-username>/Voidwatch.git
+cd Voidwatch
+```
+
+---
+
+## Backend Setup
+
+### Option A — Local Python Setup
+
+```bash
+cd server/backend
+python -m venv .venv
+```
+
+Activate the virtual environment:
+
+**Windows PowerShell:**
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+**macOS/Linux:**
+
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
-cp .env.example .env        # configure DATABASE_URL, PORT, API key
+```
+
+Create environment file:
+
+```bash
+cp .env.example .env
+```
+
+Example `.env`:
+
+```env
+DATABASE_URL=sqlite:///./voidwatch.db
+HOST=0.0.0.0
+PORT=8000
+VOIDWATCH_API_KEY=change-this-key
+CORS_ORIGINS=*
+```
+
+Start the backend:
+
+```bash
 python main.py
 ```
 
-**Train the model first:**
-```bash
-python -X utf8 train.py
-# outputs: model/voidwatch_rf.joblib
-#          model/voidwatch_scaler.joblib
-#          model/voidwatch_calibrator.joblib
-#          stats/training_history.csv
-#          stats/training_curves.png
+The API should be available at:
+
+```text
+http://localhost:8000
 ```
 
-### Dashboard + Agent
+Health check:
+
+```text
+GET /health
+```
+
+### Option B — Docker Compose
+
+If Docker support is configured:
 
 ```bash
-cd dashboard
+docker compose up --build
+```
+
+Recommended for private beta:
+
+```text
+FastAPI backend + PostgreSQL + HTTPS reverse proxy
+```
+
+---
+
+## Dashboard Setup
+
+```bash
+cd client/dashboard
 npm install
 npm start
 ```
 
-Dashboard spawns the agent automatically on startup, passing `VOIDWATCH_SERVER_URL` and `VOIDWATCH_API_KEY` as environment variables.
+The dashboard allows you to:
 
-Server URL is configured in **Settings → Server Connection**.
+- view connected agents
+- inspect processes
+- review alerts
+- provide feedback
+- configure backend connection settings
+- export reports
+
+If API authentication is enabled, configure the backend URL and API key in the dashboard settings.
 
 ---
 
-## Configuration
+## Agent Setup
 
-### `backend/.env`
+The agent is responsible for collecting endpoint telemetry and sending it to the backend.
 
-```env
-DATABASE_URL=sqlite:///./voidwatch.db
-# DATABASE_URL=postgresql://user:password@localhost:5432/voidwatch
-HOST=0.0.0.0
-PORT=8000
-VOIDWATCH_API_KEY=
-CORS_ORIGINS=*
+Example configuration:
+
+```json
+{
+  "server_url": "http://localhost:8000",
+  "mode": "collect_only",
+  "collection_interval": 10,
+  "anonymize_paths": true
+}
 ```
 
-PostgreSQL requires `psycopg2-binary`. Connection pool: `pool_size=10`, `max_overflow=20`, `pool_recycle=300`.
+For private beta, the preferred flow is:
 
-### Agent env vars
+```text
+1. Admin creates enrollment token
+2. Tester runs agent
+3. Agent calls /agents/enroll
+4. Backend returns agent_id and agent_secret
+5. Agent uses its own secret for future communication
+```
 
-| Variable | Default |
-|---|---|
-| `VOIDWATCH_SERVER_URL` | `http://localhost:8000` |
-| `VOIDWATCH_API_KEY` | *(empty)* |
+Do not use one shared API key for all testers in a real beta.
 
-Agent ID is persisted to `agent/.agent_id` (falls back to `~/.voidwatch/.agent_id`). Format: `{hostname}-{uuid4[:8]}`.
+---
+
+## Benign Data Collector
+
+The standalone collector is intended for safe benign-data collection from clean Windows machines.
+
+Recommended usage:
+
+```text
+1. Tester downloads collector package
+2. Tester reviews included source code
+3. Tester runs the collector on a clean Windows system
+4. Tester uses the computer normally
+5. Collector generates a report file
+6. Tester uploads the report and a console-completion screenshot
+```
+
+The collector should be used only with user consent.
+
+---
+
+## Training the ML Model
+
+Training code is located in:
+
+```text
+server/model
+```
+
+Typical flow:
+
+```bash
+cd server/model
+python -X utf8 train.py
+```
+
+The training pipeline should produce model artifacts and evaluation outputs such as:
+
+```text
+model files
+training history
+scenario evaluation metrics
+confusion matrices
+feature importance plots
+```
+
+### Dataset Strategy
+
+Voidwatch should not rely on a single dataset. Recommended dataset stack:
+
+```text
+1. OTRF / Mordor attack telemetry
+2. Controlled lab simulations
+3. Clean Windows benign data from the collector
+4. Beta-user feedback labels
+```
+
+Use three internal labels when possible:
+
+```text
+benign
+malicious
+unknown
+```
+
+Train only on confirmed `benign` and confirmed `malicious` samples. Exclude `unknown` samples from training.
+
+### Evaluation Strategy
+
+Do not rely only on random row-level splitting.
+
+Use scenario-based evaluation:
+
+```text
+Train scenarios and test scenarios must be separated.
+```
+
+Track:
+
+- malicious precision
+- malicious recall
+- malicious F1
+- benign recall
+- AUC-ROC
+- AUC-PR
+- confusion matrix
+- worst-case scenario recall
+
+Recommended target before private beta:
+
+```text
+malicious recall >= 0.75
+benign recall >= 0.80
+malicious F1 >= 0.70
+```
+
+---
+
+## REST API Overview
+
+Endpoint names may differ slightly depending on the current branch, but the backend should support these core routes:
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `POST` | `/agents/enroll` | Enroll new agent using token |
+| `POST` | `/agents/heartbeat` | Agent heartbeat |
+| `POST` | `/telemetry` | Submit process/network telemetry |
+| `GET` | `/agents` | List agents |
+| `GET` | `/processes` | List process records |
+| `GET` | `/alerts` | List alerts |
+| `POST` | `/alerts/{id}/feedback` | Submit alert feedback |
+| `GET` | `/feedback` | List feedback entries |
+| `GET` | `/reports/alerts.csv` | Export alerts as CSV |
+| `GET` | `/reports/telemetry.csv` | Export telemetry as CSV |
+| `GET` | `/settings` | Runtime settings |
+| `PUT` | `/settings` | Update settings |
+
+When authentication is enabled, protected endpoints require:
+
+```http
+X-API-Key: <your-api-key>
+```
+
+Agent endpoints should use per-agent secrets after enrollment.
 
 ---
 
 ## Project Structure
 
-```
-voidwatch/
-├── backend/
-│   ├── main.py           # FastAPI lifespan, CORS, pruner thread
-│   ├── api.py            # All route handlers
-│   ├── database.py       # SQLAlchemy models + engine (PG/SQLite)
-│   ├── classifier.py     # RF model, calibration, train_on(), load()
-│   ├── features.py       # extract() — ProcessData → float[31]
-│   ├── scoring.py        # score_batch(), rule engine, context modifier
-│   ├── models.py         # Pydantic I/O schemas
-│   ├── train.py          # CLI training script, OTRF loader
-│   ├── collect_benign.py # Benign snapshot collector
-│   ├── settings.py       # JSON-backed runtime settings
-│   ├── requirements.txt
-│   ├── .env.example
-│   ├── datasets/otrf/
-│   │   ├── attack/       # ZIP/tar.gz attack scenarios
-│   │   └── benign/       # JSON benign snapshots
-│   ├── model/            # joblib artifacts
-│   └── stats/            # training_history.csv, PNG graphs
-├── dashboard/
-│   ├── main.js           # Electron main, IPC handlers, agent spawn
-│   ├── preload.js        # contextBridge — config IPC + window controls
-│   ├── api.js            # fetch wrapper, _serverUrl(), utilities
-│   ├── app.js            # startup sequence, router, status bar
-│   └── pages/
-│       ├── dashboard.js  # Overview, high-risk panel, ML distribution
-│       ├── processes.js  # Process table
-│       ├── alerts.js     # Alert list with MITRE tags
-│       ├── mitre.js      # ATT&CK technique heatmap
-│       └── settings.js   # Server URL, API key, retention, DB stats
-└── agent/
-    ├── main.py               # Heartbeat + collection loop (5s interval)
-    ├── process_collector.py  # psutil enumeration + PE signature check
-    ├── network_collector.py  # Per-PID connection tracking
-    ├── metadata.py           # hostname, OS, IP, username
-    ├── sender.py             # POST /register, POST /telemetry
-    ├── telemetry.py          # TelemetryEvent dataclass
-    └── config.py             # SERVER_URL + API_KEY from env
+```text
+Voidwatch/
+├── client/
+│   ├── agent/                 # Windows endpoint agent
+│   └── dashboard/             # Electron dashboard
+│
+├── server/
+│   ├── backend/               # FastAPI API, database, scoring, reports
+│   └── model/                 # ML training pipeline and datasets
+│
+├── tools/
+│   └── collector/             # Standalone benign-data collector
+│
+├── docs/
+│   ├── PRIVACY.md
+│   ├── DATA_COLLECTION.md
+│   └── SECURITY.md
+│
+├── README.md
+├── .gitignore
+└── docker-compose.yml
 ```
 
 ---
 
-## Requirements
+## Security Notes
 
-| Component | Requirement |
-|---|---|
-| Backend | Python 3.9+ |
-| Agent | Python 3.9+, Windows 10/11 |
-| Dashboard | Node.js 18+, npm |
-| PostgreSQL driver | `psycopg2-binary` (optional) |
+Voidwatch handles sensitive endpoint telemetry. Treat it as a security product even during prototype development.
+
+Minimum requirements for private beta:
+
+- use HTTPS
+- use per-agent secrets
+- allow token revocation
+- avoid committing secrets
+- anonymize user paths where possible
+- document exactly what is collected
+- provide uninstall instructions
+- keep raw datasets out of the public repository
+- review false positives and false negatives manually
+
+Never collect credentials, cookies, private files, messages, screenshots, or keystrokes.
 
 ---
 
-## License
+## Repository Hygiene
 
-MIT
+Before publishing the repository, remove generated and private files:
+
+```text
+.git/ from exported ZIPs
+.claude/
+__pycache__/
+node_modules/
+build/
+dist/
+local databases
+local model artifacts
+raw datasets
+stats generated from private experiments
+agent secrets
+.env files
+collector executables if not intended for release
+```
+
+Recommended public repository contents:
+
+```text
+source code
+documentation
+sample config files
+screenshots
+README
+license
+setup instructions
+```
+
+Large datasets, model artifacts, and packaged executables should be released separately.
+
+---
+
+## Roadmap
+
+### Short-Term
+
+- fix backend startup/auth ordering issues
+- clean public repository
+- update README and documentation
+- enable path anonymization by default for beta collection
+- improve installer / one-click agent setup
+- run multi-split scenario evaluation
+- inspect false positives and false negatives
+
+### Private Beta
+
+- enroll 5–20 Windows testers
+- collect 50–100 hours of clean benign telemetry
+- add feedback-driven allowlist improvements
+- improve dashboard explanation quality
+- add PDF/CSV report exports
+- deploy backend with HTTPS and PostgreSQL
+
+### MVP
+
+- packaged Windows agent installer
+- organization/team support
+- stable secure enrollment
+- production database migrations
+- alert investigation workflow
+- pricing and pilot program
+- documentation for labs and small teams
+
+---
+
+## Disclaimer
+
+Voidwatch is an academic/startup prototype for defensive cybersecurity research, endpoint visibility, and controlled testing. It should only be used on systems where you have explicit permission.
+
+Do not use Voidwatch for unauthorized monitoring, credential collection, surveillance, or activity that violates privacy, law, or institutional policy.
+
+---
+
+## Contact
+
+Project: **Voidwatch**  
+Founder/Developer: **Lev Vedrov**  
+GitHub: `https://github.com/<your-username>`
