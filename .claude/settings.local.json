@@ -70,7 +70,8 @@
       "Bash(openssl genrsa *)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Administrator\\\\tmp\" -Recurse -Name)",
       "Bash(Select-Object -First 50)",
-      "Bash(openssl rsa *)"
+      "Bash(openssl rsa *)",
+      "Bash(git push *)"
     ]
   }
 }

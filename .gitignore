@@ -41,3 +41,4 @@ server/backend/license.json
 # OS
 .DS_Store
 Thumbs.db
+license_private.pem
