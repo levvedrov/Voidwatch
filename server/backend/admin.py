@@ -12,10 +12,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import func
+from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 
-from database import (AgentRecord, AlertRecord, IssuedLicense,
+from database import (AgentRecord, AlertFeedback, AlertRecord, Allowlist, IssuedLicense,
                       ProcessLabel, ProcessRecord, get_db)
 import license as _lic
 
@@ -136,35 +136,60 @@ def delete_license(license_id: int, db: Session = Depends(get_db)):
 
 @admin_router.get("/stats", dependencies=[Depends(_check_admin)])
 def stats(db: Session = Depends(get_db)):
-    threshold     = datetime.utcnow() - timedelta(seconds=60)
+    now           = datetime.utcnow()
+    threshold     = now - timedelta(seconds=60)
+    day_ago       = now - timedelta(hours=24)
+
     online_agents = db.query(AgentRecord).filter(AgentRecord.last_seen >= threshold).count()
-    total_alerts  = db.query(AlertRecord).count()
-    total_procs   = db.query(ProcessRecord).count()
-    issued        = db.query(IssuedLicense).all()
-    by_tier       = {"free": 0, "pro": 0, "enterprise": 0, "beta": 0}
+    total_agents  = db.query(AgentRecord).count()
+    # Distinct process names — matches client-side deduplication
+    total_procs  = db.query(func.count(distinct(ProcessRecord.name))).scalar() or 0
+
+    alerts = db.query(func.count(distinct(ProcessRecord.name))).filter(
+                 ProcessRecord.ml_score >= 0.80
+             ).scalar() or 0
+
+    alerts_today = db.query(func.count(distinct(ProcessRecord.name))).filter(
+                       ProcessRecord.ml_score  >= 0.80,
+                       ProcessRecord.timestamp >= day_ago,
+                   ).scalar() or 0
+
+    issued  = db.query(IssuedLicense).all()
+    by_tier = {"free": 0, "pro": 0, "enterprise": 0, "beta": 0}
     for r in issued:
         by_tier[r.tier] = by_tier.get(r.tier, 0) + 1
-    high_risk  = (
-        db.query(func.count())
-          .select_from(
-              db.query(func.max(ProcessRecord.id))
-                .filter(ProcessRecord.ml_score >= 0.80)
-                .group_by(ProcessRecord.name)
-                .subquery()
-          ).scalar() or 0
-    )
+
     lbl_counts = dict(
         db.query(ProcessLabel.label, func.count(ProcessLabel.id))
           .group_by(ProcessLabel.label).all()
     )
+    avg_ml_raw   = db.query(func.avg(ProcessRecord.ml_score)).scalar()
+    avg_ml_score = round((avg_ml_raw or 0) * 100, 1)
+
+    all_agents     = db.query(AgentRecord.first_seen, AgentRecord.last_seen).all()
+    uptime_seconds = sum(
+        max(0, (a.last_seen - a.first_seen).total_seconds())
+        for a in all_agents if a.first_seen and a.last_seen
+    )
+    uptime_hours = round(uptime_seconds / 3600, 1)
+
+    total_feedback  = db.query(AlertFeedback).count()
+    allowlist_count = db.query(Allowlist).count()
+
     return {
         "online_agents":     online_agents,
-        "high_risk":         high_risk,
+        "total_agents":      total_agents,
+        "alerts":            alerts,
+        "alerts_today":      alerts_today,
         "processes":         total_procs,
+        "avg_ml_score":      avg_ml_score,
+        "uptime_hours":      uptime_hours,
         "issued_total":      len(issued),
         "by_tier":           by_tier,
         "labeled_malicious": lbl_counts.get("malicious", 0),
         "labeled_benign":    lbl_counts.get("benign", 0),
+        "total_feedback":    total_feedback,
+        "allowlist_count":   allowlist_count,
     }
 
 
@@ -314,20 +339,29 @@ _HTML = r"""<!DOCTYPE html>
     --warn:      #f59e0b;
     --ok:        #22c55e;
     --font-mono: 'Consolas','Courier New',monospace;
+    --radius:    8px;
   }
-  body { background:var(--bg); color:var(--text); font-family:system-ui,sans-serif;
-         font-size:14px; min-height:100vh }
+  body { background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,sans-serif;
+         font-size:14px; min-height:100vh; line-height:1.5 }
+
+  ::-webkit-scrollbar { width:6px; height:6px }
+  ::-webkit-scrollbar-track { background:transparent }
+  ::-webkit-scrollbar-thumb { background:var(--border-hi); border-radius:3px }
+  ::-webkit-scrollbar-thumb:hover { background:#3a4060 }
 
   /* ── Login ── */
   #login { display:flex; align-items:center; justify-content:center; min-height:100vh }
-  .login-box { background:var(--card); border:1px solid var(--border-hi); border-radius:10px;
-               padding:40px; width:360px; text-align:center }
-  .login-box h1 { font-size:22px; font-weight:700; letter-spacing:.08em; margin-bottom:6px }
-  .login-box p  { color:var(--text-sec); margin-bottom:24px; font-size:13px }
+  .login-box { background:var(--card); border:1px solid var(--border-hi); border-radius:12px;
+               padding:44px 40px; width:360px; text-align:center;
+               box-shadow:0 8px 32px rgba(0,0,0,.6),0 0 0 1px rgba(79,142,247,.06) }
+  .login-box h1 { font-size:20px; font-weight:800; letter-spacing:.18em; margin-bottom:6px }
+  .login-box p  { color:var(--text-muted); margin-bottom:28px; font-size:11px;
+                  text-transform:uppercase; letter-spacing:.1em }
   .login-box input { width:100%; padding:10px 14px; background:var(--bg);
-                     border:1px solid var(--border-hi); border-radius:6px;
-                     color:var(--text); font-size:14px; margin-bottom:12px; outline:none }
-  .login-box input:focus { border-color:var(--accent) }
+                     border:1px solid var(--border-hi); border-radius:7px;
+                     color:var(--text); font-size:14px; margin-bottom:12px; outline:none;
+                     transition:border-color .15s,box-shadow .15s }
+  .login-box input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,142,247,.12) }
 
   /* ── Shell ── */
   #panel { display:none; min-height:100vh; flex-direction:column }
@@ -335,30 +369,28 @@ _HTML = r"""<!DOCTYPE html>
   /* topbar */
   .topbar {
     position:sticky; top:0; z-index:100;
-    background:#0a0c10;
+    background:rgba(8,10,14,.96);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
     border-bottom:1px solid var(--border);
     display:flex; align-items:stretch;
-    padding:0 24px;
-    gap:0;
+    padding:0 24px; gap:0; height:48px;
   }
   .topbar-brand {
-    font-size:13px; font-weight:700; letter-spacing:.12em;
+    font-size:12px; font-weight:800; letter-spacing:.16em;
     color:var(--text-muted); display:flex; align-items:center;
-    padding-right:28px; border-right:1px solid var(--border);
+    padding-right:24px; border-right:1px solid var(--border);
     margin-right:4px; white-space:nowrap;
   }
   .topbar-brand span { color:var(--accent) }
   .tab-btn {
-    padding:0 20px; height:46px; font-size:13px; font-weight:600;
+    padding:0 18px; height:48px; font-size:13px; font-weight:600;
     color:var(--text-muted); background:none; border:none;
     border-bottom:2px solid transparent; cursor:pointer;
-    transition:.15s; white-space:nowrap;
+    transition:color .15s; white-space:nowrap;
   }
-  .tab-btn:hover { color:var(--text) }
+  .tab-btn:hover { color:var(--text-sec) }
   .tab-btn.active { color:var(--text); border-bottom-color:var(--accent) }
-  .topbar-right {
-    margin-left:auto; display:flex; align-items:center; gap:14px;
-  }
+  .topbar-right { margin-left:auto; display:flex; align-items:center; gap:14px }
   .live-dot { display:inline-block; width:6px; height:6px; border-radius:50%;
               background:var(--ok); vertical-align:middle; margin-right:5px;
               animation:pulse 2s ease-in-out infinite }
@@ -369,51 +401,60 @@ _HTML = r"""<!DOCTYPE html>
   .live-label { font-size:11px; color:var(--text-muted) }
 
   /* page content */
-  .page { display:none; max-width:1140px; margin:0 auto; padding:28px 24px }
+  .page { display:none; max-width:1140px; margin:0 auto; padding:32px 24px }
   .page.active { display:block }
-  .page-title { font-size:18px; font-weight:700; margin-bottom:22px; color:var(--text) }
+  .page-title { font-size:17px; font-weight:700; margin-bottom:24px; color:var(--text);
+                display:flex; align-items:baseline; gap:0 }
 
   /* cards */
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
-           gap:14px; margin-bottom:28px }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:8px;
-          padding:18px 20px }
-  .card-label { font-size:11px; color:var(--text-muted); text-transform:uppercase;
-                letter-spacing:.07em; margin-bottom:6px }
-  .card-value { font-size:28px; font-weight:700 }
-  .card-sub   { font-size:12px; color:var(--text-sec); margin-top:2px }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
+           gap:12px; margin-bottom:28px }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+          padding:18px 20px; transition:border-color .2s,box-shadow .2s }
+  .card:hover { border-color:var(--border-hi); box-shadow:0 2px 12px rgba(0,0,0,.4) }
+  .card-label { font-size:10px; color:var(--text-muted); text-transform:uppercase;
+                letter-spacing:.1em; margin-bottom:8px; font-weight:600 }
+  .card-value { font-size:26px; font-weight:700; line-height:1 }
+  .card-sub   { font-size:11px; color:var(--text-muted); margin-top:5px }
 
   /* badges */
-  .badge { display:inline-block; padding:2px 10px; border-radius:20px;
-           font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em }
-  .badge-free       { background:#1e2435; color:var(--text-sec) }
-  .badge-pro        { background:#1a3a6b; color:#60a5fa }
-  .badge-enterprise { background:#2d1a5e; color:#a78bfa }
-  .badge-beta       { background:#14311f; color:#22c55e; border:1px solid #22c55e44 }
-  .badge-expired    { background:#3b1212; color:var(--danger) }
-  .badge-active     { background:#14311f; color:var(--ok) }
+  .badge { display:inline-block; padding:2px 9px; border-radius:20px;
+           font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em }
+  .badge-free       { background:rgba(74,85,104,.2);  color:var(--text-muted); border:1px solid var(--border) }
+  .badge-pro        { background:rgba(26,58,107,.4);  color:#60a5fa;  border:1px solid rgba(96,165,250,.2) }
+  .badge-enterprise { background:rgba(45,26,94,.4);   color:#a78bfa;  border:1px solid rgba(167,139,250,.2) }
+  .badge-beta       { background:rgba(20,49,31,.5);   color:#22c55e;  border:1px solid rgba(34,197,94,.25) }
+  .badge-expired    { background:rgba(59,18,18,.5);   color:var(--danger); border:1px solid rgba(239,68,68,.2) }
+  .badge-active     { background:rgba(20,49,31,.5);   color:var(--ok);     border:1px solid rgba(34,197,94,.25) }
 
   /* panel box */
-  .panel-box { background:var(--card); border:1px solid var(--border); border-radius:8px;
-               padding:20px 24px; margin-bottom:28px }
-  .panel-box h2 { font-size:13px; font-weight:700; margin-bottom:18px;
-                  color:var(--text-sec); text-transform:uppercase; letter-spacing:.08em }
+  .panel-box { background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+               padding:20px 24px; margin-bottom:24px; overflow:hidden }
+  .panel-box h2 { font-size:11px; font-weight:700; margin:-20px -24px 20px;
+                  padding:13px 24px; color:var(--text-muted); text-transform:uppercase;
+                  letter-spacing:.1em; border-bottom:1px solid var(--border);
+                  background:rgba(0,0,0,.2) }
 
   /* form */
   .form-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:12px }
-  label  { display:block; font-size:11px; color:var(--text-muted); margin-bottom:5px;
-           text-transform:uppercase; letter-spacing:.06em }
+  label  { display:block; font-size:10px; color:var(--text-muted); margin-bottom:5px;
+           text-transform:uppercase; letter-spacing:.08em; font-weight:600 }
   input, select, textarea {
-    width:100%; padding:8px 12px; background:var(--bg);
+    width:100%; padding:9px 12px; background:var(--bg);
     border:1px solid var(--border-hi); border-radius:6px;
-    color:var(--text); font-size:13px; outline:none; font-family:inherit }
-  input:focus, select:focus, textarea:focus { border-color:var(--accent) }
+    color:var(--text); font-size:13px; outline:none; font-family:inherit;
+    transition:border-color .15s,box-shadow .15s }
+  input:focus, select:focus, textarea:focus {
+    border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,142,247,.1) }
 
   /* buttons */
   .btn { padding:9px 20px; border:none; border-radius:6px; cursor:pointer;
-         font-size:13px; font-weight:600; transition:opacity .15s }
-  .btn:hover { opacity:.85 }
-  .btn-primary { background:var(--accent); color:#fff }
+         font-size:13px; font-weight:600; transition:opacity .15s,box-shadow .15s }
+  .btn:hover { opacity:.88 }
+  .btn:active { opacity:.72 }
+  .btn:disabled { opacity:.38; cursor:not-allowed }
+  .btn-primary { background:var(--accent); color:#fff; box-shadow:0 2px 8px rgba(79,142,247,.3) }
+  .btn-primary:hover { box-shadow:0 4px 16px rgba(79,142,247,.4) }
   .btn-danger  { background:var(--danger); color:#fff; padding:5px 12px; font-size:12px }
   .btn-copy    { background:var(--card2); color:var(--text-sec); border:1px solid var(--border-hi);
                  padding:4px 10px; font-size:11px; border-radius:4px }
@@ -422,60 +463,79 @@ _HTML = r"""<!DOCTYPE html>
 
   /* table */
   table { width:100%; border-collapse:collapse }
-  th { text-align:left; font-size:11px; color:var(--text-muted); text-transform:uppercase;
-       letter-spacing:.07em; padding:0 12px 10px; font-weight:600 }
-  td { padding:10px 12px; border-top:1px solid var(--border); font-size:13px; vertical-align:middle }
+  th { text-align:left; font-size:10px; color:var(--text-muted); text-transform:uppercase;
+       letter-spacing:.09em; padding:0 12px 11px; font-weight:700 }
+  td { padding:11px 12px; border-top:1px solid var(--border); font-size:13px; vertical-align:middle }
   tr:hover td { background:var(--card2) }
   .mono { font-family:var(--font-mono); font-size:11px; color:var(--text-muted);
           max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
 
   /* filter bar */
-  .filter-bar { display:flex; gap:6px; margin-bottom:14px; align-items:center }
-  .filter-btn { padding:5px 14px; border-radius:5px; font-size:12px; font-weight:600;
+  .filter-bar { display:flex; gap:6px; margin-bottom:14px; align-items:center; flex-wrap:wrap }
+  .filter-btn { padding:5px 16px; border-radius:20px; font-size:12px; font-weight:600;
                 background:transparent; color:var(--text-muted);
-                border:1px solid var(--border-hi); cursor:pointer; transition:.15s }
+                border:1px solid var(--border-hi); cursor:pointer; transition:all .15s }
   .filter-btn:hover { color:var(--text); border-color:var(--text-muted) }
-  .filter-btn.active { background:var(--accent); color:#fff; border-color:var(--accent) }
+  .filter-btn.active { background:var(--accent); color:#fff; border-color:var(--accent);
+                       box-shadow:0 2px 8px rgba(79,142,247,.25) }
 
   /* label chips */
   .lbl-chip { display:inline-block; padding:2px 9px; border-radius:4px;
-              font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em }
-  .lbl-unverified { background:#1e2435; color:var(--text-muted) }
-  .lbl-malicious  { background:#3b1212; color:#ef4444 }
-  .lbl-benign     { background:#14311f; color:#22c55e }
+              font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.06em }
+  .lbl-unverified { background:rgba(74,85,104,.2);  color:var(--text-muted) }
+  .lbl-malicious  { background:rgba(59,18,18,.5);   color:#ef4444 }
+  .lbl-benign     { background:rgba(20,49,31,.5);   color:#22c55e }
 
   /* action buttons */
-  .act-btn { padding:3px 9px; border-radius:4px; font-size:11px; font-weight:600;
+  .act-btn { padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600;
              cursor:pointer; border:1px solid; transition:opacity .15s }
   .act-btn:hover { opacity:.8 }
-  .act-mal  { background:#3b1212; color:#ef4444; border-color:#ef444466 }
-  .act-ben  { background:#14311f; color:#22c55e; border-color:#22c55e66 }
+  .act-mal  { background:rgba(59,18,18,.5); color:#ef4444; border-color:rgba(239,68,68,.3) }
+  .act-ben  { background:rgba(20,49,31,.5); color:#22c55e; border-color:rgba(34,197,94,.3) }
   .act-undo { background:var(--card2); color:var(--text-muted); border-color:var(--border-hi) }
 
   /* labeled stripes */
-  .stripe { border-radius:6px; margin-bottom:10px; overflow:hidden; border:1px solid }
-  .stripe-benign   { border-color:rgba(34,197,94,.22);  background:rgba(34,197,94,.03)  }
-  .stripe-malicious{ border-color:rgba(239,68,68,.22);  background:rgba(239,68,68,.03)  }
+  .stripe { border-radius:var(--radius); margin-bottom:12px; overflow:hidden; border:1px solid }
+  .stripe-benign   { border-color:rgba(34,197,94,.18); background:rgba(34,197,94,.02) }
+  .stripe-malicious{ border-color:rgba(239,68,68,.18); background:rgba(239,68,68,.02) }
   .stripe-hdr {
     display:flex; align-items:center; gap:10px;
-    padding:9px 14px; cursor:pointer; user-select:none; transition:.12s;
+    padding:10px 16px; cursor:pointer; user-select:none; transition:background .12s;
   }
   .stripe-hdr:hover { background:rgba(255,255,255,.03) }
-  .stripe-arrow { font-size:10px; opacity:.6; transition:transform .2s }
+  .stripe-arrow { font-size:10px; opacity:.5; transition:transform .2s }
   .stripe-arrow.open { transform:rotate(90deg) }
   .stripe-title { font-size:13px; font-weight:600; flex:1 }
   .stripe-benign    .stripe-title { color:#22c55e }
   .stripe-malicious .stripe-title { color:#ef4444 }
-  .stripe-body { display:none; border-top:1px solid rgba(255,255,255,.06) }
+  .stripe-body { display:none; border-top:1px solid rgba(255,255,255,.05) }
   .stripe-body table { margin:0 }
-  .stripe-body td { padding:7px 12px; font-size:12px }
+  .stripe-body td { padding:8px 12px; font-size:12px }
   .stripe-body tr:first-child td { border-top:none }
 
   /* misc */
   .err   { color:var(--danger); font-size:12px; margin-top:8px }
   .ok    { color:var(--ok);     font-size:12px; margin-top:8px }
-  .empty { text-align:center; padding:32px; color:var(--text-muted) }
+  .empty { text-align:center; padding:48px 20px; color:var(--text-muted); font-size:13px }
   hr { border:none; border-top:1px solid var(--border); margin:20px 0 }
+
+  /* ── Dashboard layout ── */
+  .metrics-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:20px }
+  .metric { background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+            padding:18px 18px 14px; transition:border-color .2s,box-shadow .2s }
+  .metric:hover { border-color:var(--border-hi); box-shadow:0 2px 12px rgba(0,0,0,.4) }
+  .metric-label { font-size:10px; color:var(--text-muted); text-transform:uppercase;
+                  letter-spacing:.1em; font-weight:600; margin-bottom:10px }
+  .metric-value { font-size:28px; font-weight:700; line-height:1; margin-bottom:5px }
+  .metric-sub   { font-size:11px; color:var(--text-muted) }
+  .dash-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px }
+  .dash-grid .panel-box { margin-bottom:0 }
+  .stat-list { display:flex; flex-direction:column }
+  .stat-row  { display:flex; align-items:center; justify-content:space-between;
+               padding:10px 0; border-bottom:1px solid var(--border) }
+  .stat-row:last-child { border-bottom:none }
+  .stat-label { font-size:13px; color:var(--text-sec) }
+  .stat-val   { font-size:20px; font-weight:700 }
 </style>
 </head>
 <body>
@@ -509,30 +569,93 @@ _HTML = r"""<!DOCTYPE html>
   <!-- ── Dashboard tab ── -->
   <div id="tab-dashboard" class="page active">
     <div class="page-title">Dashboard</div>
-    <div class="cards">
-      <div class="card">
-        <div class="card-label">Online Agents</div>
-        <div class="card-value" id="s-agents">—</div>
-        <div class="card-sub">Last 60 s</div>
+
+    <!-- Primary metrics — always one horizontal row -->
+    <div class="metrics-row">
+      <div class="metric">
+        <div class="metric-label">Online Agents</div>
+        <div class="metric-value" id="s-agents">—</div>
+        <div class="metric-sub">Last 60 s</div>
       </div>
-      <div class="card">
-        <div class="card-label">High Risk</div>
-        <div class="card-value" id="s-highrisk" style="color:#ef4444">—</div>
-        <div class="card-sub">ML ≥ 80% · all clients</div>
+      <div class="metric">
+        <div class="metric-label">Total Agents</div>
+        <div class="metric-value" id="s-total-agents">—</div>
+        <div class="metric-sub">All time</div>
       </div>
-      <div class="card"><div class="card-label">Issued Free</div><div class="card-value" id="s-free">—</div></div>
-      <div class="card"><div class="card-label">Issued Pro</div><div class="card-value" id="s-pro" style="color:#60a5fa">—</div></div>
-      <div class="card"><div class="card-label">Issued Enterprise</div><div class="card-value" id="s-ent" style="color:#a78bfa">—</div></div>
-      <div class="card"><div class="card-label">Issued Beta</div><div class="card-value" id="s-beta" style="color:#22c55e">—</div></div>
-      <div class="card">
-        <div class="card-label">Labeled Malicious</div>
-        <div class="card-value" id="s-lbl-mal" style="color:#ef4444">—</div>
-        <div class="card-sub">Cumulative</div>
+      <div class="metric">
+        <div class="metric-label">Alerts</div>
+        <div class="metric-value" style="color:var(--danger)" id="s-alerts">—</div>
+        <div class="metric-sub">All time · ML ≥ 80%</div>
       </div>
-      <div class="card">
-        <div class="card-label">Labeled Benign</div>
-        <div class="card-value" id="s-lbl-ben" style="color:#22c55e">—</div>
-        <div class="card-sub">Cumulative</div>
+      <div class="metric">
+        <div class="metric-label">Alerts Today</div>
+        <div class="metric-value" style="color:var(--warn)" id="s-alerts-today">—</div>
+        <div class="metric-sub">Last 24 h</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Total Processes</div>
+        <div class="metric-value" id="s-procs">—</div>
+        <div class="metric-sub">All time</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Avg ML Score</div>
+        <div class="metric-value" id="s-avg-ml">—</div>
+        <div class="metric-sub">All processes</div>
+      </div>
+    </div>
+
+    <!-- Secondary section — two side-by-side panels -->
+    <div class="dash-grid">
+      <div class="panel-box">
+        <h2>Licenses</h2>
+        <div class="stat-list">
+          <div class="stat-row">
+            <span class="stat-label"><span class="badge badge-free">Free</span></span>
+            <span class="stat-val" id="s-free">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label"><span class="badge badge-pro">Pro</span></span>
+            <span class="stat-val" style="color:#60a5fa" id="s-pro">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label"><span class="badge badge-enterprise">Enterprise</span></span>
+            <span class="stat-val" style="color:#a78bfa" id="s-ent">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label"><span class="badge badge-beta">Beta</span></span>
+            <span class="stat-val" style="color:#22c55e" id="s-beta">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Total Issued</span>
+            <span class="stat-val" id="s-issued-total">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-box">
+        <h2>Dataset &amp; Activity</h2>
+        <div class="stat-list">
+          <div class="stat-row">
+            <span class="stat-label">Labeled Malicious</span>
+            <span class="stat-val" style="color:var(--danger)" id="s-lbl-mal">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Labeled Benign</span>
+            <span class="stat-val" style="color:var(--ok)" id="s-lbl-ben">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Alert Feedback</span>
+            <span class="stat-val" id="s-feedback">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Allowlist Entries</span>
+            <span class="stat-val" id="s-allowlist">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Total Agent Uptime</span>
+            <span class="stat-val" id="s-uptime">—</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -586,7 +709,18 @@ _HTML = r"""<!DOCTYPE html>
 
     <div class="panel-box">
       <h2>Issued Licenses</h2>
-      <table>
+      <table style="table-layout:fixed">
+        <colgroup>
+          <col style="width:4%">
+          <col style="width:15%">
+          <col style="width:9%">
+          <col style="width:10%">
+          <col style="width:10%">
+          <col style="width:9%">
+          <col style="width:22%">
+          <col style="width:13%">
+          <col style="width:8%">
+        </colgroup>
         <thead><tr>
           <th>#</th><th>Customer</th><th>Tier</th>
           <th>Issued</th><th>Expires</th><th>Status</th>
@@ -602,7 +736,7 @@ _HTML = r"""<!DOCTYPE html>
   <!-- ── Process Labeling tab ── -->
   <div id="tab-labeling" class="page">
     <div class="page-title">Process Labeling
-      <span style="font-size:12px;font-weight:400;color:var(--text-muted);margin-left:10px">High-risk processes from clients (ML ≥ 80%) · label to build training dataset</span>
+      <span style="font-size:12px;font-weight:400;color:var(--text-muted);margin-left:10px">Alerts from clients (ML ≥ 80%) · label to build training dataset</span>
     </div>
 
     <!-- Benign stripe -->
@@ -652,7 +786,16 @@ _HTML = r"""<!DOCTYPE html>
         <span id="proc-count" style="margin-left:auto;font-size:12px;color:var(--text-muted)"></span>
       </div>
 
-      <table>
+      <table style="table-layout:fixed">
+        <colgroup>
+          <col style="width:22%">
+          <col style="width:16%">
+          <col style="width:17%">
+          <col style="width:8%">
+          <col style="width:13%">
+          <col style="width:10%">
+          <col style="width:14%">
+        </colgroup>
         <thead><tr>
           <th>Process</th><th>Parent</th><th>Agent</th>
           <th>ML%</th><th>Time</th><th>Label</th>
@@ -701,7 +844,7 @@ function switchTab(name) {
     b.classList.toggle('active', b.dataset.tab === name))
   document.querySelectorAll('.page').forEach(p =>
     p.classList.toggle('active', p.id === 'tab-' + name))
-  if (name === 'labeling') { loadProcesses(_procFilter, 1); loadStripes() }
+  if (name === 'labeling') { loadProcesses(_procFilter, _procPage); loadStripes() }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
@@ -739,19 +882,34 @@ function api(path, opts={}) {
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────
+function fmtUptime(hours) {
+  if (hours < 1)   return Math.round(hours * 60) + ' min'
+  if (hours < 48)  return hours.toFixed(1) + ' h'
+  if (hours < 8760) return (hours / 24).toFixed(1) + ' d'
+  return (hours / 8760).toFixed(1) + ' yr'
+}
+
 async function loadStats() {
   try {
     const r = await api('/admin/stats')
     if (!r.ok) return
     const d = await r.json()
-    document.getElementById('s-agents').textContent   = d.online_agents
-    document.getElementById('s-highrisk').textContent = d.high_risk.toLocaleString()
-    document.getElementById('s-free').textContent     = d.by_tier.free || 0
-    document.getElementById('s-pro').textContent      = d.by_tier.pro  || 0
-    document.getElementById('s-ent').textContent      = d.by_tier.enterprise || 0
-    document.getElementById('s-beta').textContent     = d.by_tier.beta || 0
-    document.getElementById('s-lbl-mal').textContent  = d.labeled_malicious || 0
-    document.getElementById('s-lbl-ben').textContent  = d.labeled_benign || 0
+    document.getElementById('s-agents').textContent        = d.online_agents
+    document.getElementById('s-total-agents').textContent  = d.total_agents ?? '—'
+    document.getElementById('s-alerts').textContent        = (d.alerts || 0).toLocaleString()
+    document.getElementById('s-alerts-today').textContent  = (d.alerts_today || 0).toLocaleString()
+    document.getElementById('s-procs').textContent         = (d.processes || 0).toLocaleString()
+    document.getElementById('s-avg-ml').textContent        = (d.avg_ml_score ?? 0) + '%'
+    document.getElementById('s-free').textContent          = d.by_tier.free || 0
+    document.getElementById('s-pro').textContent           = d.by_tier.pro  || 0
+    document.getElementById('s-ent').textContent           = d.by_tier.enterprise || 0
+    document.getElementById('s-beta').textContent          = d.by_tier.beta || 0
+    document.getElementById('s-issued-total').textContent  = d.issued_total || 0
+    document.getElementById('s-lbl-mal').textContent       = d.labeled_malicious || 0
+    document.getElementById('s-lbl-ben').textContent       = d.labeled_benign || 0
+    document.getElementById('s-feedback').textContent      = d.total_feedback ?? 0
+    document.getElementById('s-allowlist').textContent     = d.allowlist_count ?? 0
+    document.getElementById('s-uptime').textContent        = fmtUptime(d.uptime_hours || 0)
     _lastRefresh = Date.now(); tickUpdated()
   } catch {}
 }
@@ -827,14 +985,16 @@ function copyNewKey() {
 }
 
 // ── Process Labeling ──────────────────────────────────────────────────
-let _procFilter = 'unverified'
-let _procPage   = 1
+let _procFilter = sessionStorage.getItem('vw_proc_filter') || 'unverified'
+let _procPage   = parseInt(sessionStorage.getItem('vw_proc_page') || '1', 10)
 const _PROC_LIMIT = 50
 
 async function loadProcesses(filter, page) {
   filter = filter || _procFilter
   page   = page   || _procPage
   _procFilter = filter; _procPage = page
+  sessionStorage.setItem('vw_proc_filter', filter)
+  sessionStorage.setItem('vw_proc_page', String(page))
   document.querySelectorAll('.filter-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.f === filter))
   const tb = document.getElementById('proc-tbody')

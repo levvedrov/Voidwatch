@@ -9,33 +9,65 @@ function mlLevel(ml) {
 
 export async function render(el) {
   try {
-    const [alerts, agents, procs] = await Promise.all([
-      api.alerts({ limit: 500 }),
+    const [agents, procs] = await Promise.all([
       api.agents(),
       api.processes({ limit: 500 }),
     ])
 
     const today = new Date().toDateString()
 
-    // All ML stats from procs so they're consistent with ML Distribution
-    const highProcsAll = procs.filter(p => (p.ml_score ?? 0) >= 0.80)
-    const highToday    = highProcsAll.filter(p => new Date(p.timestamp).toDateString() === today).length
-    const highTotal    = highProcsAll.length
-    const avgMl        = procs.length
+    // Latest batch = all procs within 2 min of the most recent timestamp
+    const latestBatchMs = procs.reduce((max, p) => {
+      const t = parseUTC(p.timestamp).getTime()
+      return t > max ? t : max
+    }, 0)
+    const batchProcs = latestBatchMs
+      ? procs.filter(p => parseUTC(p.timestamp).getTime() >= latestBatchMs - 120_000)
+      : procs
+
+    // Active Alerts = unique high-risk process names in the latest batch
+    const activeHighMap = {}
+    batchProcs.forEach(p => {
+      if ((p.ml_score ?? 0) < 0.80) return
+      const key = (p.name || '').toLowerCase()
+      if (!activeHighMap[key] || (p.ml_score ?? 0) > (activeHighMap[key].ml_score ?? 0))
+        activeHighMap[key] = p
+    })
+    const activeHigh  = Object.values(activeHighMap)
+    const alertsTotal = activeHigh.length
+    const alertsToday = new Set(
+      procs
+        .filter(p => (p.ml_score ?? 0) >= 0.80 && new Date(p.timestamp).toDateString() === today)
+        .map(p => (p.name || '').toLowerCase())
+    ).size
+
+    const topAlerts = [...activeHigh]
+      .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))
+      .slice(0, 12)
+
+    // Avg ML from all collected procs
+    const avgMl = procs.length
       ? Math.round(procs.reduce((s, p) => s + (p.ml_score ?? 0), 0) / procs.length * 100)
       : 0
 
     const latestAgent = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
     const lastSeen    = latestAgent ? ago(latestAgent.last_seen) : '—'
 
-    // ML Distribution
+    // ML Distribution from latest batch — unique process names per band
+    const distSeen = new Set()
     const dist = { LOW: 0, MEDIUM: 0, CRITICAL: 0 }
-    procs.forEach(p => {
-      const ml = p.ml_score ?? 0
-      if      (ml >= 0.80) dist.CRITICAL++
-      else if (ml >= 0.40) dist.MEDIUM++
-      else                 dist.LOW++
-    })
+    batchProcs
+      .slice()
+      .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))
+      .forEach(p => {
+        const key = (p.name || '').toLowerCase()
+        if (distSeen.has(key)) return
+        distSeen.add(key)
+        const ml = p.ml_score ?? 0
+        if      (ml >= 0.80) dist.CRITICAL++
+        else if (ml >= 0.40) dist.MEDIUM++
+        else                 dist.LOW++
+      })
     const maxDist = Math.max(...Object.values(dist), 1)
     const ML_BANDS = [
       { level: 'CRITICAL', label: 'High',   count: dist.CRITICAL },
@@ -43,29 +75,18 @@ export async function render(el) {
       { level: 'LOW',      label: 'Benign',  count: dist.LOW      },
     ]
 
-    // Active high-risk: deduplicate by process name, keep highest ml_score per name
-    const highMap = {}
-    highProcsAll.forEach(p => {
-      const key = (p.name || '').toLowerCase()
-      if (!highMap[key] || (p.ml_score ?? 0) > (highMap[key].ml_score ?? 0))
-        highMap[key] = p
-    })
-    const highProcs = Object.values(highMap)
-      .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))
-      .slice(0, 12)
-
     el.innerHTML = `
       <div class="page-title" style="margin-bottom:20px">Dashboard <span class="sub">Overview</span></div>
 
       <div class="stat-grid">
         <div class="stat-card">
-          <div class="stat-label">High Risk Today</div>
-          <div class="stat-value ${highToday > 0 ? 'danger' : ''}">${highToday}</div>
+          <div class="stat-label">Alerts Today</div>
+          <div class="stat-value ${alertsToday > 0 ? 'danger' : ''}">${alertsToday}</div>
           <div class="stat-sub">ML ≥ 80%</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">High Risk Total</div>
-          <div class="stat-value ${highTotal > 0 ? 'danger' : ''}">${highTotal}</div>
+          <div class="stat-label">Active Alerts</div>
+          <div class="stat-value ${alertsTotal > 0 ? 'danger' : ''}">${alertsTotal}</div>
           <div class="stat-sub">ML ≥ 80%</div>
         </div>
         <div class="stat-card">
@@ -81,10 +102,10 @@ export async function render(el) {
       <div class="split">
         <div class="panel">
           <div class="panel-header">
-            Active High-Risk Processes
-            <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${highProcs.length} detected · ML ≥ 80%</span>
+            Active Alerts
+            <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${topAlerts.length} unique · ML ≥ 80%</span>
           </div>
-          ${highProcs.length ? `
+          ${topAlerts.length ? `
             <table class="data-table">
               <thead><tr>
                 <th style="width:16px"></th>
@@ -94,26 +115,26 @@ export async function render(el) {
                 <th>ML</th>
               </tr></thead>
               <tbody>
-                ${highProcs.map(p => {
-                  const ml = Math.round((p.ml_score ?? 0) * 100)
+                ${topAlerts.map(a => {
+                  const ml = Math.round((a.ml_score ?? 0) * 100)
                   const c  = mlColor(ml)
-                  return `<tr class="row-${mlLevel(p.ml_score ?? 0)}">
+                  return `<tr class="row-${mlLevel(a.ml_score ?? 0)}">
                     <td><span class="risk-dot" style="background:${c}"></span></td>
-                    <td class="proc-name">${esc(p.name || '—')}</td>
-                    <td style="color:var(--text-muted)">${esc(p.parent_name || '—')}</td>
-                    <td style="color:var(--text-muted);font-size:11px;font-family:var(--font-mono)">${esc(p.agent_id)}</td>
+                    <td class="proc-name">${esc(a.name || '—')}</td>
+                    <td style="color:var(--text-muted)">${esc(a.parent_name || '—')}</td>
+                    <td style="color:var(--text-muted);font-size:11px;font-family:var(--font-mono)">${esc(a.agent_id)}</td>
                     <td style="font-family:var(--font-mono);font-weight:700;color:${c}">${ml}%</td>
                   </tr>`
                 }).join('')}
               </tbody>
             </table>
-          ` : '<div class="empty" style="padding:32px">No high-risk processes detected</div>'}
+          ` : '<div class="empty" style="padding:32px">No alerts detected</div>'}
         </div>
 
         <div class="panel">
           <div class="panel-header">
             ML Score Distribution
-            <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${procs.length} processes</span>
+            <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${batchProcs.length} processes · latest batch</span>
           </div>
           <div class="risk-dist">
             ${ML_BANDS.map(b => `

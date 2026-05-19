@@ -47,7 +47,8 @@ DRIVER_PROCS = {
     "rivatuner.exe","msiafterburner.exe","rtss.exe",
 }
 
-ALERT_THRESHOLD = 25   # MEDIUM+
+ALERT_THRESHOLD    = 25    # MEDIUM+
+ML_ALERT_THRESHOLD = 0.80  # ML score that always triggers an alert
 
 RISK_LEVELS = [(120,"SEVERE"),(80,"CRITICAL"),(50,"HIGH"),(25,"MEDIUM"),(0,"LOW")]
 
@@ -480,7 +481,7 @@ def score_batch(agent_id: str, processes: list[ProcessData], db=None, ml_enabled
         ml_proba = classifier.predict_proba(proc) if ml_enabled else 0.0
         result = score_process(proc, processes, ml_proba=ml_proba)
 
-        if result["risk_score"] >= ALERT_THRESHOLD:
+        if result["risk_score"] >= ALERT_THRESHOLD or result["ml_score"] >= ML_ALERT_THRESHOLD:
             alerts.append({
                 "agent_id":         agent_id,
                 "pid":              proc.pid,

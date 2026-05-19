@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import (AgentRecord, AlertFeedback, AlertRecord, Allowlist,
@@ -232,6 +233,24 @@ def get_processes(
     if agent_id:
         q = q.filter(ProcessRecord.agent_id == agent_id)
     rows = q.order_by(ProcessRecord.timestamp.desc()).offset(offset).limit(limit).all()
+    return [_proc_to_out(r) for r in rows]
+
+
+@router.get("/processes/alerts", response_model=list[ProcessOut], dependencies=[Depends(_check_auth)])
+def get_alert_processes(db: Session = Depends(get_db)):
+    """Unique processes with ml_score >= 0.80, one row per name (highest score kept)."""
+    subq = (
+        db.query(func.max(ProcessRecord.id))
+          .filter(ProcessRecord.ml_score >= 0.80)
+          .group_by(ProcessRecord.name)
+          .subquery()
+    )
+    rows = (
+        db.query(ProcessRecord)
+          .filter(ProcessRecord.id.in_(subq))
+          .order_by(ProcessRecord.ml_score.desc())
+          .all()
+    )
     return [_proc_to_out(r) for r in rows]
 
 

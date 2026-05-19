@@ -3,7 +3,16 @@ import { api, mlColor, esc } from '../api.js'
 const PAGE = 50
 
 export async function render(el) {
-  const procs = await api.processes({ limit: 1000 })
+  const raw = await api.processes({ limit: 1000 })
+
+  // Deduplicate by name — keep highest ML score per unique process name
+  const seen = {}
+  raw.forEach(p => {
+    const key = (p.name || '').toLowerCase()
+    if (!seen[key] || (p.ml_score ?? 0) > (seen[key].ml_score ?? 0))
+      seen[key] = p
+  })
+  const procs = Object.values(seen)
 
   // Sort highest ML first, then alphabetically
   procs.sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0) || a.name.localeCompare(b.name))

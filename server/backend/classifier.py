@@ -32,6 +32,7 @@ _VER_FILE        = os.path.join(_MODEL_DIR, "voidwatch_model_ver.txt")
 _MODEL_VER       = "v5-hgbt"
 
 _STATS_DIR        = os.path.join(_DIR, "stats")
+os.makedirs(_STATS_DIR, exist_ok=True)
 _STATS_CSV        = os.path.join(_STATS_DIR, "training_history.csv")
 _STATS_GRAPH      = os.path.join(_STATS_DIR, "training_curves.png")
 _FEAT_IMP_GRAPH   = os.path.join(_STATS_DIR, "feature_importance.png")
