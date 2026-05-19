@@ -42,6 +42,27 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _check_auth(
+    x_api_key: str = Header(default=""),
+    x_agent_id: str = Header(default=""),
+    x_agent_secret: str = Header(default=""),
+    db: Session = Depends(get_db),
+) -> None:
+    # Admin API key — full access
+    if _API_KEY and x_api_key == _API_KEY:
+        return
+    # Per-agent secret auth
+    if x_agent_id and x_agent_secret:
+        agent = db.query(AgentRecord).filter(AgentRecord.agent_id == x_agent_id).first()
+        if agent and agent.agent_secret and agent.agent_secret == x_agent_secret:
+            revoked = db.query(RevokedAgent).filter(RevokedAgent.agent_id == x_agent_id).first()
+            if revoked:
+                raise HTTPException(status_code=403, detail="Agent revoked")
+            return
+    if _API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing credentials")
+
+
 @router.get("/health")
 def health():
     return {"status": "ok"}
@@ -67,27 +88,6 @@ def license_deactivate():
         _LICENSE_FILE.unlink()
     _license_mod.license = _free()
     return {"tier": "free"}
-
-
-def _check_auth(
-    x_api_key: str = Header(default=""),
-    x_agent_id: str = Header(default=""),
-    x_agent_secret: str = Header(default=""),
-    db: Session = Depends(get_db),
-) -> None:
-    # Admin API key — full access
-    if _API_KEY and x_api_key == _API_KEY:
-        return
-    # Per-agent secret auth
-    if x_agent_id and x_agent_secret:
-        agent = db.query(AgentRecord).filter(AgentRecord.agent_id == x_agent_id).first()
-        if agent and agent.agent_secret and agent.agent_secret == x_agent_secret:
-            revoked = db.query(RevokedAgent).filter(RevokedAgent.agent_id == x_agent_id).first()
-            if revoked:
-                raise HTTPException(status_code=403, detail="Agent revoked")
-            return
-    if _API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing credentials")
 
 
 # ---------------------------------------------------------------------------

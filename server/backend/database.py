@@ -140,6 +140,29 @@ class Allowlist(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class IssuedLicense(Base):
+    __tablename__ = "issued_licenses"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    customer   = Column(String, nullable=False)
+    tier       = Column(String, nullable=False)
+    features   = Column(String, default="[]")   # JSON
+    issued_at  = Column(DateTime, default=_utcnow)
+    expires    = Column(DateTime, nullable=True)
+    note       = Column(String, default="")
+    jwt_token  = Column(String, nullable=False)
+
+
+class ProcessLabel(Base):
+    __tablename__ = "process_labels"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    process_id = Column(Integer, unique=True, index=True)
+    label      = Column(String, default="unverified")  # unverified | malicious | benign
+    exported   = Column(Boolean, default=False)
+    labeled_at = Column(DateTime, default=_utcnow)
+
+
 def _migrate(conn):
     """Add columns that exist in the ORM but not yet in the DB (SQLite has no IF NOT EXISTS for columns)."""
     migrations = [

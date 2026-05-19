@@ -110,10 +110,19 @@ export async function render(el) {
               ${lic.features.length ? lic.features.join(', ') : 'rules only'}
             </span>
           </div>
-          ${lic.tier === 'free' ? `
-          <div style="margin-top:6px;font-size:11px;color:var(--text-muted)">
-            Set <code>VOIDWATCH_LICENSE_KEY</code> in <code>.env</code> to unlock Pro features.
-          </div>` : ''}
+          <div style="margin-top:8px;display:flex;align-items:center;gap:10px">
+            ${lic.tier !== 'free' ? `
+              <button class="action-btn" id="btn-deactivate"
+                style="color:#ef4444;border-color:#ef444444;background:transparent">
+                Deactivate License
+              </button>
+              <span id="msg-deactivate" style="font-size:12px;display:none"></span>
+            ` : `
+              <span style="font-size:11px;color:var(--text-muted)">
+                Activate a license key from Settings → Server Connection or contact your admin.
+              </span>
+            `}
+          </div>
         </div>
       </div>
 
@@ -204,6 +213,26 @@ export async function render(el) {
       alert('Save failed: ' + e.message)
     }
   })
+
+  // Deactivate license
+  const deactivateBtn = el.querySelector('#btn-deactivate')
+  if (deactivateBtn) {
+    deactivateBtn.addEventListener('click', async () => {
+      if (!confirm('Deactivate license and return to Free tier?')) return
+      const msg = el.querySelector('#msg-deactivate')
+      try {
+        await api.deactivateLicense()
+        msg.style.color = 'var(--low)'
+        msg.textContent = 'Deactivated'
+        msg.style.display = 'inline'
+        setTimeout(() => render(el), 1000)
+      } catch (e) {
+        msg.style.color = '#ef4444'
+        msg.textContent = 'Failed: ' + e.message
+        msg.style.display = 'inline'
+      }
+    })
+  }
 
   // Prune now
   el.querySelector('#btn-prune').addEventListener('click', async () => {

@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import router
+from admin import admin_router
 from classifier import classifier
 from database import AlertRecord, ProcessRecord, SessionLocal, init_db
 import settings as _cfg
@@ -94,6 +95,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(admin_router)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host=HOST, port=PORT, reload=False, log_level="warning")

@@ -189,11 +189,28 @@ function showLicenseScreen() {
   })
 }
 
+// ── Tier badge ───────────────────────────────────────────────
+async function updateTierBadge() {
+  const el = document.getElementById('tier-badge')
+  if (!el) return
+  try {
+    const cfg  = await api.getSettings()
+    const tier = cfg.license?.tier || 'free'
+    el.className = `tier-badge tier-${tier}`
+    el.textContent = tier
+  } catch {
+    el.className = 'tier-badge tier-free'
+    el.textContent = ''
+  }
+}
+
 // ── Boot ─────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
   await startup()
   updateStatus()
+  updateTierBadge()
   setInterval(updateStatus, 10_000)
+  setInterval(updateTierBadge, 30_000)
   setInterval(() => {
     if (parseHash() === 'dashboard') renderDashboard(content)
   }, 15_000)
