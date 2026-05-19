@@ -156,23 +156,25 @@ class IssuedLicense(Base):
 class ProcessLabel(Base):
     __tablename__ = "process_labels"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    process_id = Column(Integer, unique=True, index=True)
-    label      = Column(String, default="unverified")  # unverified | malicious | benign
-    exported   = Column(Boolean, default=False)
-    labeled_at = Column(DateTime, default=_utcnow)
+    id           = Column(Integer, primary_key=True, index=True)
+    process_name = Column(String, index=True, default="")   # keyed by name — survives new batches
+    process_id   = Column(Integer, index=True, nullable=True)  # last-seen record id (informational)
+    label        = Column(String, default="unverified")  # unverified | malicious | benign
+    exported     = Column(Boolean, default=False)
+    labeled_at   = Column(DateTime, default=_utcnow)
 
 
 def _migrate(conn):
     """Add columns that exist in the ORM but not yet in the DB (SQLite has no IF NOT EXISTS for columns)."""
     migrations = [
-        ("agents",           "mode",         "TEXT DEFAULT 'detect'"),
-        ("agents",           "agent_secret",  "TEXT"),
-        ("alert_feedback",   "agent_id",      "TEXT"),
-        ("alert_feedback",   "process_name",  "TEXT"),
-        ("alerts",           "ml_score",      "REAL DEFAULT 0"),
-        ("alerts",           "timeline",      "TEXT"),
-        ("processes",        "ml_score",      "REAL DEFAULT 0"),
+        ("agents",           "mode",           "TEXT DEFAULT 'detect'"),
+        ("agents",           "agent_secret",   "TEXT"),
+        ("alert_feedback",   "agent_id",       "TEXT"),
+        ("alert_feedback",   "process_name",   "TEXT"),
+        ("alerts",           "ml_score",       "REAL DEFAULT 0"),
+        ("alerts",           "timeline",       "TEXT"),
+        ("processes",        "ml_score",       "REAL DEFAULT 0"),
+        ("process_labels",   "process_name",   "TEXT NOT NULL DEFAULT ''"),
     ]
     existing: dict[str, set[str]] = {}
     for table, col, typedef in migrations:

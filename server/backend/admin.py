@@ -204,10 +204,11 @@ def list_processes(
     limit:  int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    all_labels = {pl.process_id: pl for pl in db.query(ProcessLabel).all()}
-    exported   = {pid for pid, pl in all_labels.items() if pl.exported}
+    # Key labels by process_name so they survive new agent batches (new record IDs)
+    all_labels     = {pl.process_name: pl for pl in db.query(ProcessLabel).all() if pl.process_name}
+    exported_names = {name for name, pl in all_labels.items() if pl.exported}
 
-    # Deduplicate: keep only the latest record (max id) per process name
+    # Latest record per unique process name (ML ≥ 80%)
     latest_id_subq = (
         db.query(func.max(ProcessRecord.id))
           .filter(ProcessRecord.ml_score >= 0.80)
@@ -215,18 +216,18 @@ def list_processes(
     )
     q = db.query(ProcessRecord).filter(ProcessRecord.id.in_(latest_id_subq))
 
-    if exported:
-        q = q.filter(ProcessRecord.id.notin_(exported))
+    if exported_names:
+        q = q.filter(ProcessRecord.name.notin_(exported_names))
 
     if filter == "unverified":
-        not_unverified = {pid for pid, pl in all_labels.items()
-                          if pl.label != "unverified" and not pl.exported}
-        if not_unverified:
-            q = q.filter(ProcessRecord.id.notin_(not_unverified))
+        labeled_names = {name for name, pl in all_labels.items()
+                         if pl.label != "unverified" and not pl.exported}
+        if labeled_names:
+            q = q.filter(ProcessRecord.name.notin_(labeled_names))
     elif filter in ("malicious", "benign"):
-        target = {pid for pid, pl in all_labels.items()
-                  if pl.label == filter and not pl.exported}
-        q = q.filter(ProcessRecord.id.in_(target)) if target else q.filter(False)
+        target_names = {name for name, pl in all_labels.items()
+                        if pl.label == filter and not pl.exported}
+        q = q.filter(ProcessRecord.name.in_(target_names)) if target_names else q.filter(False)
 
     total = q.count()
     rows  = q.order_by(ProcessRecord.timestamp.desc()) \
@@ -234,7 +235,7 @@ def list_processes(
 
     items = []
     for p in rows:
-        pl = all_labels.get(p.id)
+        pl = all_labels.get(p.name or "")
         items.append({
             "id":           p.id,
             "name":         p.name or "",
@@ -253,12 +254,19 @@ def label_process(process_id: int, payload: dict, db: Session = Depends(get_db))
     label = (payload.get("label") or "unverified").lower()
     if label not in {"unverified", "malicious", "benign"}:
         raise HTTPException(400, "label must be unverified, malicious, or benign")
-    pl = db.query(ProcessLabel).filter(ProcessLabel.process_id == process_id).first()
+
+    proc = db.query(ProcessRecord).filter(ProcessRecord.id == process_id).first()
+    if not proc:
+        raise HTTPException(404, "Process not found")
+    name = proc.name or ""
+
+    pl = db.query(ProcessLabel).filter(ProcessLabel.process_name == name).first()
     if pl:
-        pl.label     = label
+        pl.label      = label
+        pl.process_id = process_id
         pl.labeled_at = datetime.utcnow()
     else:
-        db.add(ProcessLabel(process_id=process_id, label=label))
+        db.add(ProcessLabel(process_name=name, process_id=process_id, label=label))
     db.commit()
     return {"ok": True}
 
@@ -268,17 +276,23 @@ def download_dataset(label: str, db: Session = Depends(get_db)):
     if label not in {"malicious", "benign"}:
         raise HTTPException(400, "label must be malicious or benign")
 
-    pending_ids = [
-        pl.process_id for pl in
-        db.query(ProcessLabel).filter(
-            ProcessLabel.label    == label,
-            ProcessLabel.exported == False,
-        ).all()
-    ]
-    if not pending_ids:
+    pending = db.query(ProcessLabel).filter(
+        ProcessLabel.label        == label,
+        ProcessLabel.exported     == False,
+        ProcessLabel.process_name != "",
+    ).all()
+    if not pending:
         raise HTTPException(404, f"No pending {label} processes to export")
 
-    procs = db.query(ProcessRecord).filter(ProcessRecord.id.in_(pending_ids)).all()
+    pending_names = [pl.process_name for pl in pending]
+
+    # Fetch the latest record per pending process name
+    latest_id_subq = (
+        db.query(func.max(ProcessRecord.id))
+          .filter(ProcessRecord.name.in_(pending_names))
+          .group_by(ProcessRecord.name)
+    )
+    procs = db.query(ProcessRecord).filter(ProcessRecord.id.in_(latest_id_subq)).all()
 
     lines = []
     for p in procs:
@@ -294,9 +308,8 @@ def download_dataset(label: str, db: Session = Depends(get_db)):
             "Hashes":          f"SHA256={p.sha256}" if p.sha256 else "",
         }))
 
-    # Mark exported atomically with the response
     db.query(ProcessLabel).filter(
-        ProcessLabel.process_id.in_(pending_ids)
+        ProcessLabel.process_name.in_(pending_names)
     ).update({"exported": True}, synchronize_session=False)
     db.commit()
 

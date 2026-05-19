@@ -14,7 +14,7 @@ export async function render(el) {
       api.processes({ limit: 500 }),
     ])
 
-    const today = new Date().toDateString()
+    const todayUTC = new Date().toISOString().slice(0, 10)
 
     // Latest batch = all procs within 2 min of the most recent timestamp
     const latestBatchMs = procs.reduce((max, p) => {
@@ -37,7 +37,7 @@ export async function render(el) {
     const alertsTotal = activeHigh.length
     const alertsToday = new Set(
       procs
-        .filter(p => (p.ml_score ?? 0) >= 0.80 && new Date(p.timestamp).toDateString() === today)
+        .filter(p => (p.ml_score ?? 0) >= 0.80 && parseUTC(p.timestamp).toISOString().slice(0, 10) === todayUTC)
         .map(p => (p.name || '').toLowerCase())
     ).size
 
@@ -70,9 +70,9 @@ export async function render(el) {
       })
     const maxDist = Math.max(...Object.values(dist), 1)
     const ML_BANDS = [
-      { level: 'CRITICAL', label: 'High',   count: dist.CRITICAL },
-      { level: 'MEDIUM',   label: 'Medium',  count: dist.MEDIUM   },
       { level: 'LOW',      label: 'Benign',  count: dist.LOW      },
+      { level: 'MEDIUM',   label: 'Medium',  count: dist.MEDIUM   },
+      { level: 'CRITICAL', label: 'High',    count: dist.CRITICAL },
     ]
 
     el.innerHTML = `
@@ -82,12 +82,12 @@ export async function render(el) {
         <div class="stat-card">
           <div class="stat-label">Alerts Today</div>
           <div class="stat-value ${alertsToday > 0 ? 'danger' : ''}">${alertsToday}</div>
-          <div class="stat-sub">ML ≥ 80%</div>
+          <div class="stat-sub">Unique · ML ≥ 80%</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Active Alerts</div>
           <div class="stat-value ${alertsTotal > 0 ? 'danger' : ''}">${alertsTotal}</div>
-          <div class="stat-sub">ML ≥ 80%</div>
+          <div class="stat-sub">Unique · current batch</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Avg ML Score</div>
@@ -136,16 +136,28 @@ export async function render(el) {
             ML Score Distribution
             <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${batchProcs.length} processes · latest batch</span>
           </div>
-          <div class="risk-dist">
-            ${ML_BANDS.map(b => `
-              <div class="risk-row">
-                <span class="risk-label">${b.label}</span>
-                <div class="risk-bar-wrap">
-                  <div class="risk-bar rbar-${b.level}" style="width:${Math.round((b.count / maxDist) * 100)}%"></div>
+          <div class="ml-chart">
+            <div class="ml-bars">
+              ${ML_BANDS.map(b => {
+                const BAR_MAX = 100
+                const barH = maxDist > 0 ? Math.max(Math.round((b.count / maxDist) * BAR_MAX), b.count > 0 ? 3 : 0) : 0
+                const col  = b.level === 'CRITICAL' ? 'var(--crit)' : b.level === 'MEDIUM' ? 'var(--med)' : 'var(--low)'
+                return `
+                  <div class="ml-bar-col">
+                    <span class="ml-bar-val" style="color:${col}">${b.count}</span>
+                    <div class="ml-bar-fill rbar-${b.level}" style="height:${barH}px"></div>
+                  </div>
+                `
+              }).join('')}
+            </div>
+            <div class="ml-x-axis">
+              ${ML_BANDS.map(b => `
+                <div class="ml-x-label">
+                  <span class="ml-x-name">${b.label}</span>
+                  <span class="ml-x-range">${b.level === 'CRITICAL' ? '≥ 80%' : b.level === 'MEDIUM' ? '40 – 79%' : '< 40%'}</span>
                 </div>
-                <span class="risk-count">${b.count}</span>
-              </div>
-            `).join('')}
+              `).join('')}
+            </div>
           </div>
         </div>
       </div>

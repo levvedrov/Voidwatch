@@ -250,14 +250,28 @@ td.mono      { font-family: var(--font-mono); font-size: 11px; color: var(--text
 .data-table tr.clickable { cursor: pointer; }
 .data-table tr.clickable.open td { background: var(--card-hover); }
 
-/* ── Risk Distribution bars ───────────────────────────────── */
-.risk-dist { padding: 16px; }
-.risk-row  { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.risk-row:last-child { margin-bottom: 0; }
-.risk-label { width: 60px; font-size: 12px; color: var(--text-muted); }
-.risk-bar-wrap { flex: 1; background: var(--border); border-radius: 2px; height: 5px; overflow: hidden; }
-.risk-bar { height: 5px; border-radius: 2px; transition: width .4s; min-width: 3px; }
-.risk-count { width: 28px; text-align: right; font-size: 12px; color: var(--text-muted); }
+/* ── ML Score Distribution (vertical column chart) ─────────── */
+.ml-chart     { padding: 20px 20px 0; }
+.ml-bars      { display: flex; align-items: flex-end; gap: 10px; height: 130px; }
+.ml-bar-col   { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; justify-content: flex-end; }
+.ml-bar-val   { font-size: 14px; font-weight: 700; font-family: var(--font-mono); line-height: 1; flex-shrink: 0; }
+.ml-bar-fill  { width: 100%; border-radius: 5px 5px 0 0; flex-shrink: 0; transition: height .55s cubic-bezier(.4,0,.2,1); }
+.ml-bar-fill.rbar-CRITICAL {
+  background: linear-gradient(to top, rgba(239,68,68,.45), var(--crit));
+  box-shadow: 0 -4px 14px rgba(239,68,68,.25);
+}
+.ml-bar-fill.rbar-MEDIUM {
+  background: linear-gradient(to top, rgba(234,179,8,.35), var(--med));
+  box-shadow: 0 -4px 14px rgba(234,179,8,.2);
+}
+.ml-bar-fill.rbar-LOW {
+  background: linear-gradient(to top, rgba(34,197,94,.25), var(--low));
+  box-shadow: 0 -4px 14px rgba(34,197,94,.2);
+}
+.ml-x-axis  { display: flex; gap: 10px; border-top: 1px solid var(--border); margin-top: 1px; }
+.ml-x-label { flex: 1; text-align: center; padding: 8px 0 16px; }
+.ml-x-name  { display: block; font-size: 11px; font-weight: 600; color: var(--text-sec); }
+.ml-x-range { display: block; font-size: 9px; color: var(--text-muted); margin-top: 2px; font-family: var(--font-mono); }
 .rbar-LOW      { background: var(--low); }
 .rbar-MEDIUM   { background: var(--med); }
 .rbar-HIGH     { background: var(--high); }
