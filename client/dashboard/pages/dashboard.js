@@ -9,9 +9,10 @@ function mlLevel(ml) {
 
 export async function render(el) {
   try {
-    const [agents, procs] = await Promise.all([
+    const [agents, procs, alertProcs] = await Promise.all([
       api.agents(),
       api.processes({ limit: 500 }),
+      api.alertProcesses(),
     ])
 
     const todayUTC = new Date().toISOString().slice(0, 10)
@@ -35,11 +36,11 @@ export async function render(el) {
     })
     const activeHigh  = Object.values(activeHighMap)
     const alertsTotal = activeHigh.length
-    const alertsToday = new Set(
-      procs
-        .filter(p => (p.ml_score ?? 0) >= 0.80 && parseUTC(p.timestamp).toISOString().slice(0, 10) === todayUTC)
-        .map(p => (p.name || '').toLowerCase())
-    ).size
+    // Alerts Today: same source as the alert history page (ML ≥ 80%, one per unique name),
+    // filtered to processes whose latest record is from today
+    const alertsToday = alertProcs
+      .filter(p => parseUTC(p.timestamp).toISOString().slice(0, 10) === todayUTC)
+      .length
 
     const topAlerts = [...activeHigh]
       .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))

@@ -111,7 +111,7 @@ async function startup() {
     }
   } catch {}
 
-  setBar('loading', 'Waiting for agent...')
+  setBar('loading', 'Waiting for agent…')
   const agentReady = await poll(async () => {
     const agents = await api.agents()
     if (!agents.length) return false
@@ -119,12 +119,22 @@ async function startup() {
     return (Date.now() - parseUTC(latest.last_seen)) < 60_000
   }, 25_000, 10_000)
 
-  setBar('done', agentReady ? 'Agent online' : 'No agent detected')
-  await new Promise(r => setTimeout(r, 380))
+  // Pre-render the dashboard while the loading screen is still visible
+  setBar('loading', 'Analysing threat intelligence…')
+  const scratch = document.createElement('div')
+  try { await renderDashboard(scratch) } catch {}
+
+  setBar('done', '')
+  await new Promise(r => setTimeout(r, 300))
   content.style.opacity = '0'
-  await new Promise(r => setTimeout(r, 140))
-  content.innerHTML = ''
-  route()
+  await new Promise(r => setTimeout(r, 150))
+  content.innerHTML = scratch.innerHTML
+  _firstRoute = false
+  document.querySelectorAll('.nav-tab').forEach(el =>
+    el.classList.toggle('active', el.dataset.page === 'dashboard')
+  )
+  document.body.classList.remove('app-loading')
+  content.style.opacity = '1'
 }
 
 function showLicenseScreen() {

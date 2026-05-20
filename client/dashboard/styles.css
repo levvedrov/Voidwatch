@@ -32,6 +32,11 @@ input, select { font: inherit; }
 ::-webkit-scrollbar { display: none; }
 * { scrollbar-width: none; }
 
+/* ── Hide nav during startup/license ─────────────────────── */
+body.app-loading .titlebar-left,
+body.app-loading .conn-status { opacity: 0; pointer-events: none; }
+.titlebar-left, .conn-status  { transition: opacity .4s ease; }
+
 /* ── Titlebar ─────────────────────────────────────────────── */
 .titlebar {
   -webkit-app-region: drag;
