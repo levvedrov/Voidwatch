@@ -1,8 +1,9 @@
-import { api, mlColor, esc } from '../api.js'
+import { api, mlColor, esc, pageLoader } from '../api.js'
 
 const PAGE = 50
 
 export async function render(el) {
+  el.innerHTML = pageLoader('Loading processes…')
   const raw = await api.processes({ limit: 1000 })
 
   // Deduplicate by name — keep highest ML score per unique process name

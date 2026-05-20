@@ -1,4 +1,4 @@
-import { api, fmtDate, ago, esc, parseUTC } from '../api.js'
+import { api, fmtDate, ago, esc, parseUTC, panelLoader } from '../api.js'
 
 const MODES = ['collect_only', 'detect', 'debug']
 const MODE_COLOR = { collect_only: '#6b7280', detect: '#22c55e', debug: '#eab308' }
@@ -13,9 +13,9 @@ export async function render(el) {
         <button class="btn-sm" id="btn-export-tel" title="Export telemetry CSV">↓ Telemetry CSV</button>
       </div>
     </div>
-    <div id="ag-agents" class="panel" style="margin-bottom:16px"></div>
+    <div id="ag-agents" class="panel" style="margin-bottom:16px">${panelLoader()}</div>
     <div class="page-title" style="font-size:14px;margin-bottom:8px">Enrollment Tokens</div>
-    <div id="ag-tokens" class="panel"></div>
+    <div id="ag-tokens" class="panel">${panelLoader()}</div>
     <div id="ag-modal" style="display:none"></div>
   `
 

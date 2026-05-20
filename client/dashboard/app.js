@@ -145,35 +145,75 @@ async function startup() {
 }
 
 function showLicenseScreen() {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+
   return new Promise(resolve => {
     content.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:400px">
-        <div style="width:480px;display:flex;flex-direction:column;gap:20px">
-          <div>
-            <div style="font-size:22px;font-weight:700;letter-spacing:.04em">VOIDWATCH</div>
-            <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Activate your license to unlock all features</div>
+      <div id="lic-screen" style="
+        position:relative;height:100%;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        transition:background 1s ease;
+        background:
+          radial-gradient(ellipse 60% 50% at 50% 40%, rgba(255,255,255,.025) 0%, transparent 70%),
+          repeating-linear-gradient(0deg, transparent, transparent 39px, var(--border) 39px, var(--border) 40px),
+          repeating-linear-gradient(90deg, transparent, transparent 39px, var(--border) 39px, var(--border) 40px);
+      ">
+        <div style="position:absolute;inset:0;pointer-events:none;
+          background:radial-gradient(ellipse 80% 80% at 50% 50%, transparent 30%, var(--bg) 100%)"></div>
+
+        <div style="position:relative;width:360px;display:flex;flex-direction:column;align-items:center">
+
+          <!-- branding (stays visible through loading) -->
+          <div id="lic-brand" style="text-align:center;margin-bottom:44px;transition:margin .6s ease">
+            <div style="font-size:9px;font-weight:700;letter-spacing:.45em;color:var(--text-muted);text-transform:uppercase;margin-bottom:16px">by Eranoid</div>
+            <div style="font-size:32px;font-weight:700;letter-spacing:.12em;color:var(--text);text-transform:uppercase;line-height:1;margin-bottom:10px">VOIDWATCH</div>
+            <div id="lic-tier-badge" style="
+              min-height:18px;margin-bottom:14px;
+              font-size:13px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
+              color:var(--text-muted);font-family:var(--font-mono);
+              opacity:0;transform:translateY(-18px) scale(0.85);
+              transition:opacity .45s ease,transform .8s cubic-bezier(0.34,1.56,0.64,1);
+            "></div>
+            <div id="lic-divider" style="width:32px;height:1px;background:var(--border-hi);margin:0 auto 16px;transition:opacity .4s ease"></div>
+            <div id="lic-welcome" style="font-size:11px;color:var(--text-muted);letter-spacing:.08em;text-transform:uppercase;transition:opacity .4s ease">Welcome to demo testing</div>
           </div>
-          <textarea id="lic-input" rows="5" placeholder="Paste your license key here…"
-            style="width:100%;padding:10px 12px;background:#0d0d1a;border:1px solid var(--border);
-                   border-radius:6px;color:inherit;font-family:var(--font-mono);font-size:11px;
-                   resize:none;line-height:1.5;box-sizing:border-box"></textarea>
-          <div id="lic-err" style="font-size:12px;color:#ef4444;min-height:16px"></div>
-          <div style="display:flex;gap:10px">
+
+          <!-- form -->
+          <div id="lic-form" style="width:100%;display:flex;flex-direction:column;gap:10px;transition:opacity .4s ease">
+            <textarea id="lic-input" rows="3" placeholder="Paste license key"
+              style="width:100%;padding:11px 14px;background:rgba(255,255,255,.03);
+                     border:1px solid var(--border);border-radius:6px;color:var(--text);
+                     font-family:var(--font-mono);font-size:11px;resize:none;line-height:1.6;
+                     box-sizing:border-box;outline:none;transition:border-color .15s"
+              onfocus="this.style.borderColor='var(--border-hi)'"
+              onblur="this.style.borderColor='var(--border)'"></textarea>
+            <div id="lic-err" style="font-size:11px;min-height:14px;letter-spacing:.03em;text-align:center"></div>
             <button id="lic-activate"
-              style="flex:1;padding:10px;background:#22c55e22;color:#22c55e;
-                     border:1px solid #22c55e44;border-radius:5px;font-size:13px;cursor:pointer">
-              Activate
+              style="width:100%;padding:11px 0;background:var(--text);color:var(--bg);
+                     border:none;border-radius:6px;font-size:11px;font-weight:700;
+                     letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:opacity .15s">
+              Activate License
             </button>
             <button id="lic-skip"
-              style="padding:10px 20px;background:transparent;color:var(--text-muted);
-                     border:1px solid var(--border);border-radius:5px;font-size:13px;cursor:pointer">
-              Skip — use Free tier
+              style="width:100%;padding:9px 0;background:transparent;color:var(--text-muted);
+                     border:none;font-size:11px;letter-spacing:.04em;cursor:pointer;transition:color .15s"
+              onmouseover="this.style.color='var(--text-sec)'"
+              onmouseout="this.style.color='var(--text-muted)'">
+              Continue without license
             </button>
           </div>
-          <div style="font-size:11px;color:var(--text-muted);line-height:1.6">
-            Free tier: rule-based detection only, 7-day retention.<br>
-            Pro / Enterprise: ML scoring, CSV export, feedback, allowlist, longer retention.
+
+          <!-- tier note -->
+          <div id="lic-note" style="margin-top:28px;font-size:11px;color:var(--text-muted);letter-spacing:.02em;text-align:center;transition:opacity .4s ease">
+            Don't have a license? Visit <span style="color:var(--text-sec)">eranoid.com</span>
           </div>
+
+          <!-- loading bar (hidden until activation animation) -->
+          <div id="lic-loading" style="opacity:0;transform:translateY(14px);transition:opacity .5s ease,transform .6s cubic-bezier(0.25,0.46,0.45,0.94);margin-top:32px;width:180px;display:flex;flex-direction:column;align-items:center;gap:14px">
+            <div class="ld-track"><div class="ld-bar loading" id="ld-bar"></div></div>
+            <div class="ld-status" id="ld-status" style="letter-spacing:.06em;text-transform:uppercase"></div>
+          </div>
+
         </div>
       </div>
     `
@@ -188,18 +228,64 @@ function showLicenseScreen() {
       const key = content.querySelector('#lic-input').value.trim()
       const err = content.querySelector('#lic-err')
       const btn = content.querySelector('#lic-activate')
-      if (!key) { err.textContent = 'Please paste your license key.'; return }
-      btn.textContent = 'Activating…'
+      if (!key) { err.style.color = 'var(--text-muted)'; err.textContent = 'Paste a license key first.'; return }
+      btn.textContent = 'Activating...'
+      btn.style.opacity = '.6'
       btn.disabled = true
       try {
         const lic = await api.activateLicense(key)
-        err.style.color = '#22c55e'
-        err.textContent = `✓ Activated — ${lic.display} tier${lic.customer ? ' · ' + lic.customer : ''}`
-        setTimeout(() => { content.style.opacity = '0'; setTimeout(resolve, 140) }, 1200)
+        const tier = (lic.display || lic.tier || 'pro').toUpperCase()
+        const isPaid = !['free'].includes((lic.tier || '').toLowerCase())
+
+        if (isPaid) {
+          // ── Activation animation sequence ──────────────────
+          const form    = content.querySelector('#lic-form')
+          const note    = content.querySelector('#lic-note')
+          const welcome = content.querySelector('#lic-welcome')
+          const divEl   = content.querySelector('#lic-divider')
+          const badge   = content.querySelector('#lic-tier-badge')
+          const loading = content.querySelector('#lic-loading')
+          const brand   = content.querySelector('#lic-brand')
+          const screen  = content.querySelector('#lic-screen')
+
+          // Step 1: fade form first
+          form.style.opacity = '0'; form.style.pointerEvents = 'none'
+          await wait(80)
+          // then stagger note / welcome / divider
+          ;[note, welcome, divEl].forEach(el => { el.style.opacity = '0'; el.style.pointerEvents = 'none' })
+          await wait(420)
+          ;[form, note, divEl].forEach(el => { el.style.display = 'none' })
+          welcome.style.display = 'none'
+
+          // Step 2: dissolve grid background
+          screen.style.background = 'var(--bg)'
+
+          // Step 3: spring-drop the tier badge and shift branding up simultaneously
+          const tierColors = { beta: '#22c55e', pro: '#d4a843', enterprise: '#a855f7' }
+          badge.textContent = tier
+          badge.style.color = tierColors[(lic.tier || '').toLowerCase()] || 'var(--text-sec)'
+          await wait(30) // allow paint
+          badge.style.opacity = '1'
+          badge.style.transform = 'translateY(0) scale(1)'
+          brand.style.marginBottom = '24px'
+          await wait(850)
+
+          // Step 4: slide loading bar up into view
+          loading.style.opacity = '1'
+          loading.style.transform = 'translateY(0)'
+          await wait(450)
+
+          resolve()
+        } else {
+          // free tier — just proceed
+          content.style.opacity = '0'
+          setTimeout(resolve, 140)
+        }
       } catch (e) {
-        err.style.color = '#ef4444'
-        err.textContent = e.message || 'Invalid key'
-        btn.textContent = 'Activate'
+        err.style.color = 'var(--crit)'
+        err.textContent = e.message || 'Invalid license key'
+        btn.textContent = 'Activate License'
+        btn.style.opacity = '1'
         btn.disabled = false
       }
     })

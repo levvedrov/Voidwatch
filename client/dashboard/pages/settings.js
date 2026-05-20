@@ -1,7 +1,7 @@
-import { api, esc } from '../api.js'
+import { api, esc, pageLoader } from '../api.js'
 
 export async function render(el) {
-  el.innerHTML = '<div class="empty">Loading…</div>'
+  el.innerHTML = pageLoader('Loading settings…')
 
   // Load stats but don't fail the whole page if server is unreachable
   let cfg = { process_retain_days: 7, alert_retain_days: 30, license: null }
@@ -79,7 +79,7 @@ export async function render(el) {
         <div class="panel-header">Authentication</div>
         <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
           <div style="font-size:12px;color:var(--text-muted)">
-            Set if <code>VOIDWATCH_API_KEY</code> is enabled on the backend.
+            Set if <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-sec)">VOIDWATCH_API_KEY</span> is enabled on the backend.
           </div>
           <div class="settings-row">
             <div style="font-size:13px;color:var(--text)">API Key</div>
@@ -119,7 +119,7 @@ export async function render(el) {
               <span id="msg-deactivate" style="font-size:12px;display:none"></span>
             ` : `
               <span style="font-size:11px;color:var(--text-muted)">
-                Activate a license key from Settings → Server Connection or contact your admin.
+                No active license. Restart the app to activate at startup.
               </span>
             `}
           </div>
@@ -210,7 +210,10 @@ export async function render(el) {
       msg.style.display = 'inline'
       setTimeout(() => { msg.style.display = 'none' }, 2000)
     } catch (e) {
-      alert('Save failed: ' + e.message)
+      const msg = el.querySelector('#msg-save')
+      msg.textContent = 'Failed: ' + e.message
+      msg.style.color = 'var(--crit)'
+      msg.style.display = 'inline'
     }
   })
 

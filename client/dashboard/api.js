@@ -158,3 +158,11 @@ export function fmtDate(ts) {
 export function esc(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
+
+export function pageLoader(msg = '') {
+  return `<div class="ld-screen"><div class="ld-wordmark">VOIDWATCH</div><div class="ld-track"><div class="ld-bar loading"></div></div><div class="ld-status">${msg}</div></div>`
+}
+
+export function panelLoader(msg = '') {
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:40px 24px;user-select:none"><div class="ld-track"><div class="ld-bar loading"></div></div>${msg ? `<div class="ld-status">${msg}</div>` : ''}</div>`
+}

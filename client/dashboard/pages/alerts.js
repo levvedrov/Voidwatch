@@ -1,4 +1,4 @@
-import { api, fmtDate, mlColor, esc, parseUTC } from '../api.js'
+import { api, fmtDate, mlColor, esc, parseUTC, panelLoader } from '../api.js'
 
 const PAGE = 50
 
@@ -59,7 +59,7 @@ function drawChart(canvas, buckets) {
     ctx.setLineDash([3, 5])
     ctx.beginPath(); ctx.moveTo(PAD.left, yy); ctx.lineTo(W - PAD.right, yy); ctx.stroke()
     ctx.setLineDash([])
-    ctx.fillStyle = '#374151'
+    ctx.fillStyle = 'rgba(255,255,255,0.22)'
     ctx.fillText(val, PAD.left - 6, yy + 3)
   })
 
@@ -129,7 +129,7 @@ function drawChart(canvas, buckets) {
 
   // X-axis time labels
   const step = Math.max(1, Math.ceil(n / 8))
-  ctx.fillStyle = '#374151'
+  ctx.fillStyle = 'rgba(255,255,255,0.22)'
   ctx.font      = '9px Consolas, monospace'
   ctx.textAlign = 'center'
   buckets.forEach((b, i) => {
@@ -254,7 +254,7 @@ export async function render(el) {
       </div>
     </div>
 
-    <div id="al-wrap"></div>
+    <div id="al-wrap"><div class="panel">${panelLoader('Loading alerts…')}</div></div>
     <div class="pagination" id="al-pag"></div>
   `
 
@@ -337,7 +337,7 @@ export async function render(el) {
       <th>Time</th>
       <th>Process</th>
       <th>Parent</th>
-      <th>Category</th>
+      <th>Path</th>
       <th>ML</th>
     </tr></thead>`
 
@@ -355,7 +355,7 @@ export async function render(el) {
         <td class="mono">${fmtDate(a.timestamp)}</td>
         <td class="proc-name">${esc(a.name)}</td>
         <td style="color:var(--text-muted)">${esc(a.parent_name || '—')}</td>
-        <td style="font-size:12px;color:var(--text-muted)">${esc(a.path || '—')}</td>
+        <td class="mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.path || '—')}</td>
         <td style="font-family:var(--font-mono);font-weight:700;color:${mlC}">${ml}%</td>
       `
 
@@ -434,9 +434,9 @@ export async function render(el) {
             ${lbl('Detection Indicators')}
             <div style="display:flex;flex-direction:column;gap:0;margin-top:2px">
               ${flags.map(f => `
-                <div style="display:flex;gap:10px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border)">
-                  <span style="font-size:9px;color:var(--text-muted);flex-shrink:0">—</span>
-                  <span style="font-size:11px;color:var(--text-sec)">${f}</span>
+                <div style="display:flex;gap:8px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border)">
+                  <span style="font-size:8px;color:var(--crit);flex-shrink:0;line-height:1.8">&#9679;</span>
+                  <span style="font-size:11px;color:var(--crit)">${f}</span>
                 </div>`).join('')}
             </div>
           </div>
@@ -482,12 +482,6 @@ export async function render(el) {
         btn.disabled = false
       }
     })
-  }
-
-  function kv(label, valHtml) {
-    return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px">
-      <span style="color:var(--text-muted)">${label}</span>${valHtml}
-    </div>`
   }
 
   renderPage()

@@ -1,4 +1,4 @@
-import { api, ago, mlColor, parseUTC, esc } from '../api.js'
+import { api, ago, mlColor, parseUTC, esc, pageLoader } from '../api.js'
 
 function mlLevel(ml) {
   if (ml >= 0.80) return 'CRITICAL'
@@ -8,6 +8,7 @@ function mlLevel(ml) {
 
 
 export async function render(el) {
+  el.innerHTML = pageLoader('Loading dashboard…')
   try {
     const [agents, procs, alertProcs] = await Promise.all([
       api.agents(),

@@ -1,4 +1,4 @@
-import { api, fmtDate, esc } from '../api.js'
+import { api, fmtDate, esc, panelLoader } from '../api.js'
 
 const KIND_LABELS = {
   process_name: 'Process Name',
@@ -18,7 +18,7 @@ export async function render(el) {
       Allowlisted processes are skipped by the scoring engine — no alerts will be generated for them.
       Use this to suppress false positives from known-good internal tools.
     </div>
-    <div id="al-list" class="panel"></div>
+    <div id="al-list" class="panel">${panelLoader()}</div>
     <div id="al-modal" style="display:none"></div>
   `
 

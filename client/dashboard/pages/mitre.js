@@ -1,9 +1,16 @@
-import { api, MITRE_NAMES, scoreColor } from '../api.js'
+import { api, MITRE_NAMES, scoreColor, esc, pageLoader } from '../api.js'
 
 const LEVEL_ORDER = { SEVERE:5, CRITICAL:4, HIGH:3, MEDIUM:2, LOW:1 }
 
 export async function render(el) {
-  const alerts = await api.alerts({ limit: 1000 })
+  el.innerHTML = pageLoader('Loading threat map…')
+  let alerts = []
+  try {
+    alerts = await api.alerts({ limit: 1000 })
+  } catch(e) {
+    el.innerHTML = `<div class="empty">Failed to load MITRE data: ${esc(e.message)}</div>`
+    return
+  }
 
   const map = {}
     alerts.forEach(a => {
