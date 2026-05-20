@@ -51,7 +51,7 @@ export const api = {
     catch { return false }
   },
   alerts(params = {})       { return get('/alerts?'    + new URLSearchParams(params)) },
-  alertProcesses()          { return get('/processes/alerts') },
+  alertProcesses(params = {}) { return get('/processes/alerts?' + new URLSearchParams(params)) },
   processes(params = {})    { return get('/processes?' + new URLSearchParams(params)) },
   agents()                  { return get('/agents') },
   timeline(params = {})     { return get('/timeline?'  + new URLSearchParams(params)) },

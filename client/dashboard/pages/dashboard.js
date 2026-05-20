@@ -36,11 +36,11 @@ export async function render(el) {
     })
     const activeHigh  = Object.values(activeHighMap)
     const alertsTotal = activeHigh.length
-    // Alerts Today: same source as the alert history page (ML ≥ 80%, one per unique name),
-    // filtered to processes whose latest record is from today
-    const alertsToday = alertProcs
-      .filter(p => parseUTC(p.timestamp).toISOString().slice(0, 10) === todayUTC)
-      .length
+    const alertsToday = new Set(
+      alertProcs
+        .filter(p => parseUTC(p.timestamp).toISOString().slice(0, 10) === todayUTC)
+        .map(p => p.name)
+    ).size
 
     const topAlerts = [...activeHigh]
       .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))

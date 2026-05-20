@@ -237,20 +237,34 @@ def get_processes(
 
 
 @router.get("/processes/alerts", response_model=list[ProcessOut], dependencies=[Depends(_check_auth)])
-def get_alert_processes(db: Session = Depends(get_db)):
-    """Unique processes with ml_score >= 0.80, one row per name (highest score kept)."""
-    subq = (
-        db.query(func.max(ProcessRecord.id))
-          .filter(ProcessRecord.ml_score >= 0.80)
-          .group_by(ProcessRecord.name)
-          .scalar_subquery()
-    )
-    rows = (
-        db.query(ProcessRecord)
-          .filter(ProcessRecord.id.in_(subq))
-          .order_by(ProcessRecord.ml_score.desc())
-          .all()
-    )
+def get_alert_processes(
+    raw: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    """
+    raw=false (default): one row per unique process name, latest record.
+    raw=true: every record with ml_score >= 0.80, newest first (for timeline).
+    """
+    if raw:
+        rows = (
+            db.query(ProcessRecord)
+              .filter(ProcessRecord.ml_score >= 0.80)
+              .order_by(ProcessRecord.timestamp.desc())
+              .all()
+        )
+    else:
+        subq = (
+            db.query(func.max(ProcessRecord.id))
+              .filter(ProcessRecord.ml_score >= 0.80)
+              .group_by(ProcessRecord.name)
+              .scalar_subquery()
+        )
+        rows = (
+            db.query(ProcessRecord)
+              .filter(ProcessRecord.id.in_(subq))
+              .order_by(ProcessRecord.ml_score.desc())
+              .all()
+        )
     return [_proc_to_out(r) for r in rows]
 
 
@@ -260,7 +274,7 @@ def get_alerts(
     min_score: int            = Query(0, ge=0, le=150),
     risk_level: Optional[str] = Query(None),
     category:  Optional[str] = Query(None),
-    limit: int  = Query(50, ge=1, le=500),
+    limit: int  = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):

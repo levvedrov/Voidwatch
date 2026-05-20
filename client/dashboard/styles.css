@@ -364,6 +364,10 @@ td.mono      { font-family: var(--font-mono); font-size: 11px; color: var(--text
   0%   { background-position: 150% 0; }
   100% { background-position: -50% 0; }
 }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
 .ld-bar.done { background: var(--low);  animation: none; }
 .ld-bar.fail { background: var(--crit); animation: none; }
 .ld-status {
@@ -463,6 +467,18 @@ td.mono      { font-family: var(--font-mono); font-size: 11px; color: var(--text
 }
 .pag-btn:hover:not(:disabled) { background: var(--card-hover); color: var(--text); }
 .pag-btn:disabled { opacity: .35; cursor: not-allowed; }
+.det-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color .12s, color .12s;
+}
+.det-btn:hover { border-color: var(--border-hi); color: var(--text); }
+.det-btn:disabled { opacity: .4; cursor: not-allowed; }
 .pag-info {
   font-size: 12px;
   color: var(--text-muted);
