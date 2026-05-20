@@ -77,7 +77,14 @@ async def lifespan(app: FastAPI):
     log.info("Database initialised")
     classifier.load()
     if classifier.model is not None:
-        log.info("Model loaded")
+        log.info("ML model loaded")
+    else:
+        log.warning("ML model not loaded — scoring is rules-only")
+    if _cors_origins == ["*"]:
+        log.warning(
+            "CORS is open to all origins. Set CORS_ORIGINS env var before exposing to a network "
+            "(e.g. CORS_ORIGINS=http://localhost:8000,app://.)."
+        )
     threading.Thread(target=_pruner, daemon=True, name="db-pruner").start()
     log.info("Listening on http://%s:%d", HOST, PORT)
     yield

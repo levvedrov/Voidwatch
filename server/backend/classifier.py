@@ -434,19 +434,35 @@ class ProcessClassifier:
         )
 
     def load(self) -> None:
-        # Support legacy RF model path for backward compatibility
+        log = logging.getLogger(__name__)
         path = MODEL_PATH
         if not os.path.exists(path):
             legacy = os.path.join(_MODEL_DIR, "voidwatch_rf.joblib")
             if os.path.exists(legacy):
                 path = legacy
-        if os.path.exists(path) and os.path.exists(SCALER_PATH):
+        if not os.path.exists(path) or not os.path.exists(SCALER_PATH):
+            log.warning("ML model not found — falling back to rules-only scoring. Run train.py to generate it.")
+            return
+        try:
+            if os.path.exists(_VER_FILE):
+                with open(_VER_FILE) as f:
+                    on_disk = f.read().strip()
+                if on_disk != _MODEL_VER:
+                    log.warning(
+                        "ML model version mismatch (on disk: %s, expected: %s) — "
+                        "falling back to rules-only scoring. Re-run train.py.",
+                        on_disk, _MODEL_VER,
+                    )
+                    return
             self.model  = joblib.load(path)
             self.scaler = joblib.load(SCALER_PATH)
             if os.path.exists(CALIBRATOR_PATH):
                 self.calibrator = joblib.load(CALIBRATOR_PATH)
-        else:
-            logging.getLogger(__name__).warning("Model not found — run train.py to generate it")
+        except Exception as exc:
+            log.error(
+                "Failed to load ML model (%s) — falling back to rules-only scoring.", exc
+            )
+            self.model = self.scaler = self.calibrator = None
 
     def predict_proba(self, proc) -> float:
         if self.model is None or self.scaler is None:

@@ -3,6 +3,8 @@ import io
 import json
 import os
 import secrets
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,6 +39,23 @@ router = APIRouter()
 
 _API_KEY      = os.environ.get("VOIDWATCH_API_KEY", "")
 _DEDUP_WINDOW = timedelta(minutes=10)
+
+# ── Per-agent telemetry rate limiter ────────────────────────────────────────
+_TELEMETRY_MIN_INTERVAL = float(os.environ.get("TELEMETRY_MIN_INTERVAL", "1.0"))
+_rate_lock    = threading.Lock()
+_last_telemetry: dict[str, float] = {}
+
+def _check_telemetry_rate(agent_id: str) -> None:
+    now = time.monotonic()
+    with _rate_lock:
+        last = _last_telemetry.get(agent_id, 0.0)
+        if now - last < _TELEMETRY_MIN_INTERVAL:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit: wait {_TELEMETRY_MIN_INTERVAL:.0f}s between telemetry submissions.",
+                headers={"Retry-After": str(int(_TELEMETRY_MIN_INTERVAL))},
+            )
+        _last_telemetry[agent_id] = now
 
 
 def _utcnow() -> datetime:
@@ -161,6 +180,7 @@ def register_agent(payload: RegisterPayload, db: Session = Depends(get_db)):
 
 @router.post("/telemetry", status_code=201, dependencies=[Depends(_check_auth)])
 def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
+    _check_telemetry_rate(payload.agent_id)
     ts   = payload.timestamp or _utcnow()
     meta = payload.metadata.model_dump() if payload.metadata else None
 
@@ -294,21 +314,33 @@ def get_alerts(
 @router.get("/agents", response_model=list[AgentOut], dependencies=[Depends(_check_auth)])
 def get_agents(db: Session = Depends(get_db)):
     agents = db.query(AgentRecord).order_by(AgentRecord.last_seen.desc()).all()
-    result = []
-    for r in agents:
-        event_count    = db.query(ProcessRecord).filter(ProcessRecord.agent_id == r.agent_id).count()
-        alert_count    = db.query(AlertRecord).filter(AlertRecord.agent_id == r.agent_id).count()
-        feedback_count = db.query(AlertFeedback).filter(AlertFeedback.agent_id == r.agent_id).count()
-        result.append(AgentOut(
+
+    # Fetch all counts in three queries instead of 3×N
+    proc_counts = dict(
+        db.query(ProcessRecord.agent_id, func.count(ProcessRecord.id))
+          .group_by(ProcessRecord.agent_id).all()
+    )
+    alert_counts = dict(
+        db.query(AlertRecord.agent_id, func.count(AlertRecord.id))
+          .group_by(AlertRecord.agent_id).all()
+    )
+    feedback_counts = dict(
+        db.query(AlertFeedback.agent_id, func.count(AlertFeedback.id))
+          .group_by(AlertFeedback.agent_id).all()
+    )
+
+    return [
+        AgentOut(
             agent_id=r.agent_id, hostname=r.hostname, os=r.os,
             ip=r.ip, username=r.username,
             first_seen=r.first_seen, last_seen=r.last_seen,
             mode=r.mode or "detect",
-            event_count=event_count,
-            alert_count=alert_count,
-            feedback_count=feedback_count,
-        ))
-    return result
+            event_count=proc_counts.get(r.agent_id, 0),
+            alert_count=alert_counts.get(r.agent_id, 0),
+            feedback_count=feedback_counts.get(r.agent_id, 0),
+        )
+        for r in agents
+    ]
 
 
 @router.get("/timeline", dependencies=[Depends(_check_auth)])

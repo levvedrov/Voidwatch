@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 _FILE = Path(__file__).parent / "settings.json"
@@ -19,5 +20,7 @@ def save(updates: dict) -> dict:
     for k, v in updates.items():
         if k in _DEFAULTS:
             current[k] = v
-    _FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    tmp = _FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    os.replace(tmp, _FILE)
     return current
