@@ -213,6 +213,7 @@ def list_processes(
         db.query(func.max(ProcessRecord.id))
           .filter(ProcessRecord.ml_score >= 0.80)
           .group_by(ProcessRecord.name)
+          .scalar_subquery()
     )
     q = db.query(ProcessRecord).filter(ProcessRecord.id.in_(latest_id_subq))
 
@@ -291,6 +292,7 @@ def download_dataset(label: str, db: Session = Depends(get_db)):
         db.query(func.max(ProcessRecord.id))
           .filter(ProcessRecord.name.in_(pending_names))
           .group_by(ProcessRecord.name)
+          .scalar_subquery()
     )
     procs = db.query(ProcessRecord).filter(ProcessRecord.id.in_(latest_id_subq)).all()
 

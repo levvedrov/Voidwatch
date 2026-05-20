@@ -112,12 +112,19 @@ async function startup() {
   } catch {}
 
   setBar('loading', 'Waiting for agent…')
-  const agentReady = await poll(async () => {
+  await poll(async () => {
     const agents = await api.agents()
     if (!agents.length) return false
     const latest = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
     return (Date.now() - parseUTC(latest.last_seen)) < 60_000
   }, 25_000, 10_000)
+
+  // Wait for the agent to have submitted at least one process batch
+  setBar('loading', 'Collecting telemetry…')
+  await poll(async () => {
+    const procs = await api.processes({ limit: 1 })
+    return procs.length > 0
+  }, 20_000, 2_000)
 
   // Pre-render the dashboard while the loading screen is still visible
   setBar('loading', 'Analysing threat intelligence…')

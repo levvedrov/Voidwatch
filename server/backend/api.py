@@ -243,7 +243,7 @@ def get_alert_processes(db: Session = Depends(get_db)):
         db.query(func.max(ProcessRecord.id))
           .filter(ProcessRecord.ml_score >= 0.80)
           .group_by(ProcessRecord.name)
-          .subquery()
+          .scalar_subquery()
     )
     rows = (
         db.query(ProcessRecord)
