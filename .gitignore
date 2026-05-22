@@ -30,6 +30,9 @@ client/dashboard/node_modules/
 client/dashboard/dist/
 client/dashboard/out/
 
+# Installer build output
+dist/
+
 # Secrets
 .env
 *.env

@@ -4,8 +4,6 @@ import { render as renderProcesses }  from './pages/processes.js'
 import { render as renderMitre }      from './pages/mitre.js'
 import { render as renderAlerts }     from './pages/alerts.js'
 import { render as renderSettings }   from './pages/settings.js'
-import { render as renderAgents }    from './pages/agents.js'
-import { render as renderAllowlist } from './pages/allowlist.js'
 
 const content = document.getElementById('content')
 
@@ -43,8 +41,6 @@ async function route() {
       case 'mitre':     await renderMitre(content);     break
       case 'alerts':    await renderAlerts(content);    break
       case 'settings':  await renderSettings(content);  break
-      case 'agents':    await renderAgents(content);    break
-      case 'allowlist': await renderAllowlist(content); break
       default:          await renderDashboard(content);
     }
   } catch(e) {

@@ -541,7 +541,7 @@ def get_allowlist(db: Session = Depends(get_db)):
 @router.post("/allowlist", response_model=AllowlistOut, dependencies=[Depends(_check_auth)])
 def add_allowlist(entry: AllowlistEntry, db: Session = Depends(get_db)):
     _lic.license.require("allowlist")
-    valid = {"process", "publisher", "path", "hash", "parent_child"}
+    valid = {"process_name", "hash", "cmdline"}
     if entry.kind not in valid:
         raise HTTPException(status_code=400, detail=f"kind must be one of {valid}")
     rec = Allowlist(kind=entry.kind, value=entry.value, note=entry.note)

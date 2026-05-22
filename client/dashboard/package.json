@@ -4,9 +4,49 @@
   "description": "Voidwatch SOC Dashboard",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder --win"
   },
   "devDependencies": {
-    "electron": "^35.7.5"
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.eranoid.voidwatch",
+    "productName": "Voidwatch",
+    "copyright": "Copyright © 2025 Eranoid",
+    "directories": {
+      "output": "../../dist"
+    },
+    "files": [
+      "**/*",
+      "!node_modules/.cache/**",
+      "!**/*.map"
+    ],
+    "extraFiles": [
+      {
+        "from": "../agent/voidwatch_agent.exe",
+        "to": "agent/voidwatch_agent.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Voidwatch",
+      "installerSidebar": null
+    }
   }
 }

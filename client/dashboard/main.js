@@ -5,8 +5,12 @@ const https  = require('https')
 const fs     = require('fs')
 const { spawn, execFileSync } = require('child_process')
 
-const ROOT        = path.join(__dirname, '..')
-const CONFIG_PATH = path.join(app.getPath('userData'), 'voidwatch-config.json')
+const ROOT        = app.isPackaged
+  ? path.dirname(process.execPath)
+  : path.join(__dirname, '..')
+function getConfigPath() {
+  return path.join(app.getPath('userData'), 'voidwatch-config.json')
+}
 
 let win, agentProc
 let _stopping          = false
@@ -14,13 +18,13 @@ let _agentRestartDelay = 3000
 
 // ── Config persistence ────────────────────────────────────
 function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) }
+  try { return JSON.parse(fs.readFileSync(getConfigPath(), 'utf8')) }
   catch { return { serverUrl: 'http://localhost:8000', apiKey: '' } }
 }
 
 function saveConfig(data) {
   const cfg = { ...loadConfig(), ...data }
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
+  fs.writeFileSync(getConfigPath(), JSON.stringify(cfg, null, 2))
   return cfg
 }
 
@@ -45,18 +49,40 @@ ipcMain.handle('config:check-server', async (_, url) => {
   })
 })
 
-// ── Python detection ──────────────────────────────────────
-function findPython() {
-  for (const cmd of ['python', 'py', 'python3']) {
-    try {
-      execFileSync(cmd, ['--version'], { timeout: 3000, windowsHide: true, stdio: 'pipe' })
-      return cmd
-    } catch {}
+const AGENT_EXE    = path.join(ROOT, 'agent', 'voidwatch_agent.exe')
+const AUTOSTART_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
+const AUTOSTART_NAME = 'VoidwatchAgent'
+
+// ── Autostart (Windows registry HKCU\Run) ────────────────
+function setupAutostart() {
+  if (!fs.existsSync(AGENT_EXE)) return
+  try {
+    execFileSync('reg', [
+      'add', AUTOSTART_KEY,
+      '/v', AUTOSTART_NAME,
+      '/t', 'REG_SZ',
+      '/d', `"${AGENT_EXE}"`,
+      '/f',
+    ], { windowsHide: true, stdio: 'pipe' })
+    console.log('[main] Autostart registered')
+  } catch (e) {
+    console.error('[main] Autostart registration failed:', e.message)
   }
-  return null
 }
 
-const PYTHON = findPython()
+// ── Check if agent process is already running ─────────────
+function isAgentRunning() {
+  try {
+    const out = execFileSync(
+      'tasklist',
+      ['/FI', 'IMAGENAME eq voidwatch_agent.exe', '/NH'],
+      { windowsHide: true, stdio: 'pipe', encoding: 'utf8', timeout: 5000 }
+    )
+    return out.toLowerCase().includes('voidwatch_agent.exe')
+  } catch {
+    return false
+  }
+}
 
 // ── Process management ────────────────────────────────────
 function killProc(proc) {
@@ -66,8 +92,8 @@ function killProc(proc) {
 }
 
 function spawnAgent(serverUrl, apiKey) {
-  if (!PYTHON) {
-    console.error('[main] Python not found — install Python 3.9+ and add it to PATH')
+  if (!fs.existsSync(AGENT_EXE)) {
+    console.error('[main] voidwatch_agent.exe not found — run compile.bat inside client/agent/')
     return null
   }
   const env = {
@@ -75,7 +101,7 @@ function spawnAgent(serverUrl, apiKey) {
     VOIDWATCH_SERVER_URL: serverUrl || 'http://localhost:8000',
     VOIDWATCH_API_KEY:    apiKey    || '',
   }
-  const proc = spawn(PYTHON, [path.join(ROOT, 'agent', 'main.py')], {
+  const proc = spawn(AGENT_EXE, [], {
     cwd: path.join(ROOT, 'agent'),
     windowsHide: true,
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -100,12 +126,35 @@ function spawnAgent(serverUrl, apiKey) {
 }
 
 function startAgent() {
+  setupAutostart()
+  if (isAgentRunning()) {
+    console.log('[main] Agent already running — skipping spawn')
+    // Still watch for it going down; poll every 15s
+    _watchExternal()
+    return
+  }
   const cfg = loadConfig()
   agentProc = spawnAgent(cfg.serverUrl, cfg.apiKey)
 }
 
+// Poll for externally-started agent going offline (no proc handle available)
+let _watchTimer = null
+function _watchExternal() {
+  if (_watchTimer) return
+  _watchTimer = setInterval(() => {
+    if (_stopping) { clearInterval(_watchTimer); _watchTimer = null; return }
+    if (!agentProc && !isAgentRunning()) {
+      console.log('[main] External agent gone — restarting')
+      clearInterval(_watchTimer); _watchTimer = null
+      const cfg = loadConfig()
+      agentProc = spawnAgent(cfg.serverUrl, cfg.apiKey)
+    }
+  }, 15_000)
+}
+
 function stopAgent() {
   _stopping = true
+  if (_watchTimer) { clearInterval(_watchTimer); _watchTimer = null }
   killProc(agentProc)
   agentProc = null
 }

@@ -455,7 +455,6 @@ export async function render(el) {
         <div style="padding:8px 20px;display:flex;gap:6px">
           <button data-action="copy-path"  class="det-btn">Copy Path</button>
           <button data-action="copy-name"  class="det-btn">Copy Name</button>
-          <button data-action="allowlist"  class="det-btn">Add to Allowlist</button>
         </div>
       </div>
     `
@@ -467,20 +466,6 @@ export async function render(el) {
     })
     td.querySelector('[data-action="copy-name"]')?.addEventListener('click', () => {
       navigator.clipboard.writeText(a.name)
-    })
-    td.querySelector('[data-action="allowlist"]')?.addEventListener('click', async e => {
-      const btn = e.currentTarget
-      btn.textContent = 'Adding…'
-      btn.disabled = true
-      try {
-        await api.addAllowlist({ kind: 'process', value: a.name, note: 'Flagged from Alerts' })
-        btn.textContent = '✓ Added'
-        btn.style.color = '#22c55e'
-      } catch {
-        btn.textContent = 'Failed'
-        btn.style.color = '#ef4444'
-        btn.disabled = false
-      }
     })
   }
 

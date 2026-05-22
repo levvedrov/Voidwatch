@@ -30,13 +30,13 @@ log = logging.getLogger(__name__)
 #   openssl genrsa -out license_private.pem 2048
 #   openssl rsa -in license_private.pem -pubout -out license_public.pem
 _PUBLIC_KEY = os.environ.get("VOIDWATCH_LICENSE_PUBLIC_KEY", """-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1YMBDzyKI/1hDVVnsFBX
-B96qcC6+AfevcWknJsW+kaTa45vlbIfBvgr1aLgYKDzFmrodRbFHWTHZs8vlyckW
-GxJ5QrZEy+16+Ois9/zvaAV8rzaG6+Zy35vy3MaqU2Js8qCz05rQKFs+GEWR+9k0
-BYuqaq+lxUmRo3xBiWPzPuCXCFF3NZl8GENX27npg7bfc8qT9pL+HFDkdy85XFNG
-0Q7MIUvS6gzs+J4ek0oydDMUnWC0fn3LpkgYBIUlAPxjA5FT6lWs7U1VJiLXkD46
-gjU3w5kjJhyTPkaCxHsvs+OlPa5q9W0Y59B1h6yCmmNYJVkJXfIC9fbZq15+wYP8
-NQIDAQAB
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAi+hl5xhUnLTenWVUMtlT
+poD2UqN4MwsrfuXgYp1PSIu74un3PRu1oMfNZwFzkM9sScF3n/KAX7y42pxbMT8x
+iYLDcMjOA9KST1INQSGSrC/3RJ0Gl0V6w/TtmYHfwPWImI5GvIQuSK6dD+jVYgvR
+aB+K9LDWQ9QUmaVECLcWy++7ILtG7cXH3pHCaFjyAO5SR0tpNVcT9+bKFMrrgG2u
+Bkr3SRiIk0HufZVvjnyO0EOIrzBPStP2oJjHOL+IN4xVKMGUbMWtmjhgxszWjbyf
++EgnkFqboZkiFFojd5bXo5dl83vHT8Xt7LwmCi/QJ2Kxw3KUYX8MTVh4Ikdb2mSQ
+KwIDAQAB
 -----END PUBLIC KEY-----""")
 
 _LICENSE_FILE = Path(__file__).parent / "license.json"
