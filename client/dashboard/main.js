@@ -19,7 +19,7 @@ let _agentRestartDelay = 3000
 // ── Config persistence ────────────────────────────────────
 function loadConfig() {
   try { return JSON.parse(fs.readFileSync(getConfigPath(), 'utf8')) }
-  catch { return { serverUrl: 'http://0.0.0.0:8000', apiKey: '4d8313223e4f6d9965618a4e3c502f55c4a912a78264fa6e211571fab11e468b' } }
+  catch { return { serverUrl: 'https://api.voidwatch.eranoid.com', apiKey: '4d8313223e4f6d9965618a4e3c502f55c4a912a78264fa6e211571fab11e468b' } }
 }
 
 function saveConfig(data) {
@@ -98,7 +98,7 @@ function spawnAgent(serverUrl, apiKey) {
   }
   const env = {
     ...process.env,
-    VOIDWATCH_SERVER_URL: serverUrl || 'http://0.0.0.0:8000',
+    VOIDWATCH_SERVER_URL: serverUrl || 'https://api.voidwatch.eranoid.com',
     VOIDWATCH_API_KEY:    apiKey    || '',
   }
   const proc = spawn(AGENT_EXE, [], {
