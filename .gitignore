@@ -36,12 +36,13 @@ dist/
 # Secrets
 .env
 *.env
+!server/backend/.env
 
-# License keys (private key must never be committed)
-server/license_private.pem
+# License keys
 server/backend/license.json
 
 # OS
 .DS_Store
 Thumbs.db
 license_private.pem
+!server/license_private.pem

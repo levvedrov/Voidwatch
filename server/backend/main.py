@@ -14,7 +14,10 @@ except ImportError:
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
 
+from pathlib import Path
 from api import router
 from admin import admin_router
 from classifier import classifier
@@ -103,6 +106,16 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(admin_router)
+
+_DOWNLOADS_DIR = Path(os.path.dirname(__file__)).parent.parent / "dist"
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    safe = Path(filename).name
+    path = _DOWNLOADS_DIR / safe
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path, filename=safe, media_type="application/octet-stream")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host=HOST, port=PORT, reload=False, log_level="warning")

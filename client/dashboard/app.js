@@ -310,8 +310,13 @@ window.addEventListener('load', async () => {
   updateTierBadge()
   setInterval(updateStatus, 10_000)
   setInterval(updateTierBadge, 30_000)
-  setInterval(() => {
-    if (parseHash() === 'dashboard') renderDashboard(content)
+  setInterval(async () => {
+    if (parseHash() !== 'dashboard') return
+    const scratch = document.createElement('div')
+    try {
+      await renderDashboard(scratch)
+      content.innerHTML = scratch.innerHTML
+    } catch {}
   }, 15_000)
   setInterval(() => {
     document.querySelectorAll('[data-ts]').forEach(el => {

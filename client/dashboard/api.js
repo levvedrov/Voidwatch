@@ -1,10 +1,12 @@
 function _serverUrl() {
-  try { return localStorage.getItem('voidwatch_server_url') || 'http://localhost:8000' }
-  catch { return 'http://localhost:8000' }
+  try { return localStorage.getItem('voidwatch_server_url') || 'http://0.0.0.0:8000' }
+  catch { return 'http://0.0.0.0:8000' }
 }
 
+const _DEFAULT_KEY = '4d8313223e4f6d9965618a4e3c502f55c4a912a78264fa6e211571fab11e468b'
+
 function _apiKey() {
-  try { return localStorage.getItem('voidwatch_api_key') || '' } catch { return '' }
+  try { return localStorage.getItem('voidwatch_api_key') || _DEFAULT_KEY } catch { return _DEFAULT_KEY }
 }
 
 function _headers(extra = {}) {

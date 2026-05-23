@@ -1,6 +1,6 @@
 {
   "server_url": "http://localhost:8000",
-  "api_key": "",
+  "api_key": "4d8313223e4f6d9965618a4e3c502f55c4a912a78264fa6e211571fab11e468b",
   "mode": "detect",
   "collection_interval": 10,
   "collect_command_line": true,

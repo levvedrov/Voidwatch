@@ -26,7 +26,7 @@ def main():
     customer = sys.argv[2]
     expires  = sys.argv[3]
 
-    valid_tiers = {"pro", "enterprise"}
+    valid_tiers = {"pro", "enterprise", "beta"}
     if tier not in valid_tiers:
         print(f"Error: tier must be one of {valid_tiers}")
         sys.exit(1)
@@ -34,6 +34,7 @@ def main():
     features = {
         "pro":        ["ml", "export", "feedback", "allowlist"],
         "enterprise": ["ml", "export", "feedback", "allowlist"],
+        "beta":       ["ml", "export", "feedback", "allowlist"],
     }[tier]
 
     payload = {

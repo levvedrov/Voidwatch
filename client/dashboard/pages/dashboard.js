@@ -27,6 +27,10 @@ export async function render(el) {
       ? procs.filter(p => parseUTC(p.timestamp).getTime() >= latestBatchMs - 120_000)
       : procs
 
+    const avgRisk = batchProcs.length
+      ? Math.round(batchProcs.reduce((s, p) => s + (p.ml_score ?? 0), 0) / batchProcs.length * 100)
+      : 0
+
     // Active Alerts = unique high-risk process names in the latest batch
     const activeHighMap = {}
     batchProcs.forEach(p => {
@@ -46,11 +50,6 @@ export async function render(el) {
     const topAlerts = [...activeHigh]
       .sort((a, b) => (b.ml_score ?? 0) - (a.ml_score ?? 0))
       .slice(0, 12)
-
-    // Avg ML from all collected procs
-    const avgMl = procs.length
-      ? Math.round(procs.reduce((s, p) => s + (p.ml_score ?? 0), 0) / procs.length * 100)
-      : 0
 
     const latestAgent = agents.sort((a, b) => parseUTC(b.last_seen) - parseUTC(a.last_seen))[0]
     const lastSeen    = latestAgent ? ago(latestAgent.last_seen) : '—'
@@ -84,16 +83,17 @@ export async function render(el) {
         <div class="stat-card">
           <div class="stat-label">Alerts Today</div>
           <div class="stat-value ${alertsToday > 0 ? 'danger' : ''}">${alertsToday}</div>
-          <div class="stat-sub">Unique · ML ≥ 80%</div>
+          <div class="stat-sub">High risk processes</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Active Alerts</div>
           <div class="stat-value ${alertsTotal > 0 ? 'danger' : ''}">${alertsTotal}</div>
-          <div class="stat-sub">Unique · current batch</div>
+          <div class="stat-sub">Live processes</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Avg ML Score</div>
-          <div class="stat-value ${avgMl >= 80 ? 'danger' : avgMl >= 40 ? 'warn' : ''}">${avgMl}%</div>
+          <div class="stat-label">Avg Risk</div>
+          <div class="stat-value ${avgRisk >= 80 ? 'danger' : avgRisk >= 40 ? 'warn' : ''}">${avgRisk}%</div>
+          <div class="stat-sub">Current batch</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Last Check</div>
@@ -103,10 +103,7 @@ export async function render(el) {
 
       <div class="split">
         <div class="panel">
-          <div class="panel-header">
-            Active Alerts
-            <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${topAlerts.length} unique · ML ≥ 80%</span>
-          </div>
+          <div class="panel-header">Active Alerts</div>
           ${topAlerts.length ? `
             <table class="data-table">
               <thead><tr>
@@ -114,7 +111,7 @@ export async function render(el) {
                 <th>Process</th>
                 <th>Parent</th>
                 <th>Agent</th>
-                <th>ML</th>
+                <th>Risk</th>
               </tr></thead>
               <tbody>
                 ${topAlerts.map(a => {
@@ -134,10 +131,7 @@ export async function render(el) {
         </div>
 
         <div class="panel">
-          <div class="panel-header">
-            ML Score Distribution
-            <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${batchProcs.length} processes · latest batch</span>
-          </div>
+          <div class="panel-header">ML Score Distribution</div>
           <div class="ml-chart">
             <div class="ml-bars">
               ${ML_BANDS.map(b => {
@@ -156,7 +150,6 @@ export async function render(el) {
               ${ML_BANDS.map(b => `
                 <div class="ml-x-label">
                   <span class="ml-x-name">${b.label}</span>
-                  <span class="ml-x-range">${b.level === 'CRITICAL' ? '≥ 80%' : b.level === 'MEDIUM' ? '40 – 79%' : '< 40%'}</span>
                 </div>
               `).join('')}
             </div>

@@ -3,42 +3,42 @@ import { api, esc, pageLoader } from '../api.js'
 export async function render(el) {
   el.innerHTML = pageLoader('Loading settings…')
 
-  // Load stats but don't fail the whole page if server is unreachable
   let cfg = { process_retain_days: 7, alert_retain_days: 30, license: null }
   let stats = { db_size_mb: 0, db_type: '—', process_records: 0, alert_records: 0 }
   try { [cfg, stats] = await Promise.all([api.getSettings(), api.getStats()]) } catch {}
   const lic = cfg.license || { tier: 'free', display: 'Free', features: [], customer: '', expires: null }
 
-  const currentUrl = localStorage.getItem('voidwatch_server_url') || 'http://localhost:8000'
-  const currentKey = localStorage.getItem('voidwatch_api_key') || ''
+  let elCfg = { serverUrl: 'http://0.0.0.0:8000', apiKey: '' }
+  try { elCfg = await __vw.getConfig() } catch {}
 
   el.innerHTML = `
     <div class="page-title">Settings</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:760px">
 
       <div class="panel" style="grid-column:1/-1">
-        <div class="panel-header">Server Connection</div>
+        <div class="panel-header">Connection</div>
         <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
-          <div style="font-size:12px;color:var(--text-muted)">
-            Voidwatch backend address. The agent will also report to this server.
-          </div>
           <div class="settings-row">
             <div>
               <div style="font-size:13px;color:var(--text)">Server URL</div>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">e.g. http://192.168.1.100:8000</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Voidwatch backend address</div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <input id="inp-server" class="toolbar-input" type="text"
-                     placeholder="http://localhost:8000"
-                     value="${esc(currentUrl)}"
-                     style="width:260px" />
-              <button class="action-btn" id="btn-test">Test</button>
-              <span id="msg-test" style="font-size:12px;display:none"></span>
+            <input id="inp-server" class="toolbar-input" type="text"
+                   value="${esc(elCfg.serverUrl || '')}"
+                   style="width:220px;font-family:var(--font-mono);font-size:11px" />
+          </div>
+          <div class="settings-row">
+            <div>
+              <div style="font-size:13px;color:var(--text)">API Key</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">From server .env VOIDWATCH_API_KEY</div>
             </div>
+            <input id="inp-apikey" class="toolbar-input" type="password"
+                   value="${esc(elCfg.apiKey || '')}"
+                   style="width:220px;font-family:var(--font-mono);font-size:11px" />
           </div>
           <div style="display:flex;align-items:center;gap:10px">
-            <button class="action-btn" id="btn-server-save">Save & Reconnect</button>
-            <span id="msg-server" style="font-size:12px;color:var(--low);display:none">Saved — reload to reconnect</span>
+            <button class="action-btn" id="btn-conn-save">Save & Reload</button>
+            <span id="msg-conn" style="font-size:12px;color:var(--low);display:none">Saved — reloading…</span>
           </div>
         </div>
       </div>
@@ -71,26 +71,6 @@ export async function render(el) {
           <div style="display:flex;align-items:center;gap:10px">
             <button class="action-btn" id="btn-save">Save</button>
             <span id="msg-save" style="font-size:12px;color:var(--low);display:none">Saved</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header">Authentication</div>
-        <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
-          <div style="font-size:12px;color:var(--text-muted)">
-            Set if <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-sec)">VOIDWATCH_API_KEY</span> is enabled on the backend.
-          </div>
-          <div class="settings-row">
-            <div style="font-size:13px;color:var(--text)">API Key</div>
-            <input id="inp-apikey" class="toolbar-input" type="password"
-                   placeholder="leave blank if not set"
-                   value="${esc(currentKey)}"
-                   style="width:180px" />
-          </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <button class="action-btn" id="btn-savekey">Save Key</button>
-            <span id="msg-key" style="font-size:12px;color:var(--low);display:none">Saved</span>
           </div>
         </div>
       </div>
@@ -155,48 +135,24 @@ export async function render(el) {
     </div>
   `
 
-  // Server URL test
-  el.querySelector('#btn-test').addEventListener('click', async () => {
-    const url = el.querySelector('#inp-server').value.trim()
-    const msg = el.querySelector('#msg-test')
-    msg.textContent = 'Testing…'
-    msg.style.color = 'var(--text-muted)'
-    msg.style.display = 'inline'
+  // Save connection
+  el.querySelector('#btn-conn-save').addEventListener('click', async () => {
+    const serverUrl = el.querySelector('#inp-server').value.trim()
+    const apiKey    = el.querySelector('#inp-apikey').value.trim()
+    if (!serverUrl) return
     try {
-      const result = await __vw.checkServer(url)
-      if (result.ok) {
-        msg.textContent = 'Connected'
-        msg.style.color = 'var(--low)'
-      } else {
-        msg.textContent = result.error ? `Failed: ${result.error}` : 'Unreachable'
-        msg.style.color = 'var(--crit)'
-      }
+      await __vw.saveConfig({ serverUrl, apiKey })
+      localStorage.setItem('voidwatch_server_url', serverUrl)
+      localStorage.setItem('voidwatch_api_key',    apiKey)
+      const msg = el.querySelector('#msg-conn')
+      msg.style.display = 'inline'
+      setTimeout(() => location.reload(), 800)
     } catch (e) {
-      msg.textContent = 'Error: ' + e.message
+      const msg = el.querySelector('#msg-conn')
+      msg.textContent = 'Failed: ' + e.message
       msg.style.color = 'var(--crit)'
+      msg.style.display = 'inline'
     }
-  })
-
-  // Save server URL
-  el.querySelector('#btn-server-save').addEventListener('click', async () => {
-    const url = el.querySelector('#inp-server').value.trim()
-    if (!url) return
-    localStorage.setItem('voidwatch_server_url', url)
-    try { await __vw.saveConfig({ serverUrl: url }) } catch {}
-    const msg = el.querySelector('#msg-server')
-    msg.style.display = 'inline'
-    setTimeout(() => { msg.style.display = 'none' }, 3000)
-  })
-
-  // Save API key
-  el.querySelector('#btn-savekey').addEventListener('click', async () => {
-    const key = el.querySelector('#inp-apikey').value.trim()
-    if (key) localStorage.setItem('voidwatch_api_key', key)
-    else localStorage.removeItem('voidwatch_api_key')
-    try { await __vw.saveConfig({ apiKey: key }) } catch {}
-    const msg = el.querySelector('#msg-key')
-    msg.style.display = 'inline'
-    setTimeout(() => { msg.style.display = 'none' }, 2000)
   })
 
   // Save retention

@@ -228,7 +228,7 @@ body.app-loading .conn-status { opacity: 0; pointer-events: none; }
 /* ── Stat Cards ───────────────────────────────────────────── */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 10px;
   margin-bottom: 20px;
 }
@@ -236,8 +236,10 @@ body.app-loading .conn-status { opacity: 0; pointer-events: none; }
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 18px 14px;
+  padding: 18px 20px 16px;
+  transition: border-color .15s;
 }
+.stat-card:hover { border-color: var(--border-hi); }
 .stat-label {
   font-size: 10px;
   font-weight: 600;
@@ -261,7 +263,7 @@ body.app-loading .conn-status { opacity: 0; pointer-events: none; }
 .stat-sub {
   font-size: 10px;
   color: var(--text-muted);
-  margin-top: 6px;
+  margin-top: 7px;
   letter-spacing: .02em;
 }
 
@@ -342,9 +344,8 @@ td.mono      { font-family: var(--font-mono); font-size: 11px; color: var(--text
   box-shadow: 0 -4px 12px rgba(34,197,94,.15);
 }
 .ml-x-axis  { display: flex; gap: 10px; border-top: 1px solid var(--border); margin-top: 1px; }
-.ml-x-label { flex: 1; text-align: center; padding: 8px 0 16px; }
+.ml-x-label { flex: 1; text-align: center; padding: 9px 0 12px; }
 .ml-x-name  { display: block; font-size: 11px; font-weight: 600; color: var(--text-sec); }
-.ml-x-range { display: block; font-size: 9px; color: var(--text-muted); margin-top: 2px; font-family: var(--font-mono); }
 .rbar-LOW      { background: var(--low); }
 .rbar-MEDIUM   { background: var(--med); }
 .rbar-HIGH     { background: var(--high); }

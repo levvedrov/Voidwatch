@@ -4,14 +4,18 @@ Served at /admin  (protected by VOIDWATCH_API_KEY)
 """
 from __future__ import annotations
 
+import csv as _csv
 import json
 import logging
 import os
+import subprocess
+import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 
@@ -21,8 +25,18 @@ import license as _lic
 
 log = logging.getLogger(__name__)
 
-_API_KEY         = os.environ.get("VOIDWATCH_API_KEY", "")
+_API_KEY          = os.environ.get("VOIDWATCH_API_KEY", "")
 _PRIVATE_KEY_PATH = Path(__file__).parent.parent / "license_private.pem"
+
+_TRAIN_SCRIPT   = Path(__file__).parent.parent / "model" / "train.py"
+_DATASET_BASE   = Path(__file__).parent.parent / "model" / "datasets" / "otrf"
+_STATS_DIR      = Path(__file__).parent / "stats"
+_TRAIN_LOG      = _STATS_DIR / "train.log"
+_STATS_CSV      = _STATS_DIR / "training_history.csv"
+_MODEL_VER_FILE = Path(__file__).parent / "model" / "voidwatch_model_ver.txt"
+
+_train_proc: subprocess.Popen | None = None
+_train_lock  = threading.Lock()
 
 admin_router = APIRouter(prefix="/admin")
 
@@ -136,7 +150,7 @@ def delete_license(license_id: int, db: Session = Depends(get_db)):
 
 @admin_router.get("/stats", dependencies=[Depends(_check_admin)])
 def stats(db: Session = Depends(get_db)):
-    now           = datetime.utcnow()
+    now           = datetime.now(timezone.utc).replace(tzinfo=None)
     threshold     = now - timedelta(seconds=60)
     day_ago       = now - timedelta(hours=24)
 
@@ -265,7 +279,7 @@ def label_process(process_id: int, payload: dict, db: Session = Depends(get_db))
     if pl:
         pl.label      = label
         pl.process_id = process_id
-        pl.labeled_at = datetime.utcnow()
+        pl.labeled_at = datetime.now(timezone.utc).replace(tzinfo=None)
     else:
         db.add(ProcessLabel(process_name=name, process_id=process_id, label=label))
     db.commit()
@@ -315,12 +329,88 @@ def download_dataset(label: str, db: Session = Depends(get_db)):
     ).update({"exported": True}, synchronize_session=False)
     db.commit()
 
-    fname = f"voidwatch_{label}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+    fname = f"voidwatch_{label}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+
+    # Place in the training dataset directory so train.py picks it up automatically
+    if label == "benign":
+        save_dir = _DATASET_BASE / "benign"
+    else:
+        save_dir = _DATASET_BASE / "attack" / "voidwatch_labeled"
+    try:
+        save_dir.mkdir(parents=True, exist_ok=True)
+        (save_dir / fname).write_text("\n".join(lines), encoding="utf-8")
+        log.info("[admin] Saved %d %s records → %s", len(lines), label, save_dir / fname)
+    except Exception as exc:
+        log.warning("[admin] Could not save dataset to disk: %s", exc)
+
     return Response(
         content="\n".join(lines),
         media_type="application/x-ndjson",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Model / training routes
+# ---------------------------------------------------------------------------
+
+@admin_router.get("/model/stats", dependencies=[Depends(_check_admin)])
+def model_stats():
+    ver          = _MODEL_VER_FILE.read_text(encoding="utf-8").strip() if _MODEL_VER_FILE.exists() else None
+    model_exists = (Path(__file__).parent / "model" / "voidwatch_model.joblib").exists()
+    if not _STATS_CSV.exists():
+        return {"status": "no_model" if not model_exists else "no_stats",
+                "version": ver, "latest": None, "history": []}
+    rows: list[dict] = []
+    try:
+        with open(_STATS_CSV, newline="", encoding="utf-8") as f:
+            rows = list(_csv.DictReader(f))
+    except Exception:
+        pass
+    return {"status": "ok", "version": ver, "latest": rows[-1] if rows else None, "history": rows[-10:]}
+
+
+@admin_router.get("/model/graph/{name}", dependencies=[Depends(_check_admin)])
+def model_graph(name: str):
+    if name not in {"training_curves", "feature_importance", "roc_pr_curves"}:
+        raise HTTPException(404, "Unknown graph")
+    path = _STATS_DIR / f"{name}.png"
+    if not path.exists():
+        raise HTTPException(404, "Graph not generated yet — train the model first")
+    return FileResponse(str(path), media_type="image/png")
+
+
+@admin_router.post("/model/train", dependencies=[Depends(_check_admin)])
+def start_training():
+    global _train_proc
+    with _train_lock:
+        if _train_proc and _train_proc.poll() is None:
+            raise HTTPException(409, "Training already running")
+        if not _TRAIN_SCRIPT.exists():
+            raise HTTPException(404, f"train.py not found at {_TRAIN_SCRIPT}")
+        _STATS_DIR.mkdir(parents=True, exist_ok=True)
+        log_f = open(_TRAIN_LOG, "w", encoding="utf-8")
+        _train_proc = subprocess.Popen(
+            [sys.executable, "-X", "utf8", str(_TRAIN_SCRIPT)],
+            stdout=log_f, stderr=subprocess.STDOUT,
+            cwd=str(_TRAIN_SCRIPT.parent),
+        )
+    log.info("[admin] Training started  pid=%d", _train_proc.pid)
+    return {"ok": True, "pid": _train_proc.pid}
+
+
+@admin_router.get("/model/train/status", dependencies=[Depends(_check_admin)])
+def training_status():
+    running   = bool(_train_proc and _train_proc.poll() is None)
+    exit_code = None if running else (_train_proc.returncode if _train_proc else None)
+    log_lines: list[str] = []
+    if _TRAIN_LOG.exists():
+        try:
+            lines = _TRAIN_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+            log_lines = lines[-60:]
+        except Exception:
+            pass
+    return {"running": running, "exit_code": exit_code, "log": "\n".join(log_lines)}
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +665,7 @@ _HTML = r"""<!DOCTYPE html>
     <button class="tab-btn active" data-tab="dashboard"  onclick="switchTab('dashboard')">Dashboard</button>
     <button class="tab-btn"        data-tab="licenses"   onclick="switchTab('licenses')">Issue License</button>
     <button class="tab-btn"        data-tab="labeling"   onclick="switchTab('labeling')">Process Labeling</button>
+    <button class="tab-btn"        data-tab="model"      onclick="switchTab('model')">Model</button>
     <div class="topbar-right">
       <span class="live-label"><span class="live-dot"></span><span id="last-updated">—</span></span>
       <button class="btn btn-ghost" onclick="doLogout()">Sign Out</button>
@@ -824,6 +915,96 @@ _HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- ── Model tab ── -->
+  <div id="tab-model" class="page">
+    <div class="page-title">Model
+      <span id="m-ver-badge" style="font-size:12px;font-weight:400;color:var(--text-muted);margin-left:10px;font-family:var(--font-mono)"></span>
+    </div>
+
+    <!-- Key metrics -->
+    <div class="metrics-row">
+      <div class="metric">
+        <div class="metric-label">Precision</div>
+        <div class="metric-value" id="m-prec">—</div>
+        <div class="metric-sub">Malicious</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Recall</div>
+        <div class="metric-value" id="m-rec">—</div>
+        <div class="metric-sub">Malicious</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">F1</div>
+        <div class="metric-value" id="m-f1">—</div>
+        <div class="metric-sub">Malicious</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">AUC-ROC</div>
+        <div class="metric-value" id="m-roc">—</div>
+        <div class="metric-sub">All classes</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Avg Precision</div>
+        <div class="metric-value" id="m-ap">—</div>
+        <div class="metric-sub">PR curve</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Session</div>
+        <div class="metric-value" id="m-sess">—</div>
+        <div class="metric-sub" id="m-ts" style="font-size:10px"></div>
+      </div>
+    </div>
+
+    <!-- Confusion matrix + train controls -->
+    <div class="panel-box" style="margin-bottom:16px">
+      <h2>Dataset &amp; Confusion Matrix</h2>
+      <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
+        <div style="display:flex;gap:20px;flex-wrap:wrap">
+          <div><span style="font-size:11px;color:var(--text-muted)">Train</span><br>
+               <span style="font-size:16px;font-weight:700" id="m-ntrain">—</span></div>
+          <div><span style="font-size:11px;color:var(--text-muted)">Test</span><br>
+               <span style="font-size:16px;font-weight:700" id="m-ntest">—</span></div>
+          <div style="width:1px;background:var(--border);align-self:stretch"></div>
+          <div><span style="font-size:11px;color:var(--text-muted)">TP</span><br>
+               <span style="font-size:16px;font-weight:700;color:var(--ok)" id="m-tp">—</span></div>
+          <div><span style="font-size:11px;color:var(--text-muted)">FP</span><br>
+               <span style="font-size:16px;font-weight:700;color:var(--warn)" id="m-fp">—</span></div>
+          <div><span style="font-size:11px;color:var(--text-muted)">FN</span><br>
+               <span style="font-size:16px;font-weight:700;color:var(--danger)" id="m-fn">—</span></div>
+          <div><span style="font-size:11px;color:var(--text-muted)">TN</span><br>
+               <span style="font-size:16px;font-weight:700" id="m-tn">—</span></div>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:12px">
+          <span id="m-train-status" style="font-size:12px;color:var(--text-muted)"></span>
+          <button class="btn btn-primary" id="btn-train" onclick="startTraining()">Train Model</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Graphs -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px">
+      <div class="panel-box" style="padding:0;overflow:hidden">
+        <h2 style="margin:0;padding:12px 16px">Training Curves</h2>
+        <img id="g-curves" style="width:100%;display:block" onerror="this.style.display='none'" />
+      </div>
+      <div class="panel-box" style="padding:0;overflow:hidden">
+        <h2 style="margin:0;padding:12px 16px">Feature Importance</h2>
+        <img id="g-feat" style="width:100%;display:block" onerror="this.style.display='none'" />
+      </div>
+      <div class="panel-box" style="padding:0;overflow:hidden">
+        <h2 style="margin:0;padding:12px 16px">ROC / PR Curves</h2>
+        <img id="g-roc" style="width:100%;display:block" onerror="this.style.display='none'" />
+      </div>
+    </div>
+
+    <!-- Training log -->
+    <div class="panel-box" id="train-log-box" style="display:none">
+      <h2>Training Log</h2>
+      <pre id="train-log" style="font-family:var(--font-mono);font-size:11px;color:var(--text-sec);
+           max-height:320px;overflow-y:auto;white-space:pre-wrap;line-height:1.6;margin:0"></pre>
+    </div>
+  </div>
+
 </div><!-- /panel -->
 
 <script>
@@ -860,6 +1041,7 @@ function switchTab(name) {
   document.querySelectorAll('.page').forEach(p =>
     p.classList.toggle('active', p.id === 'tab-' + name))
   if (name === 'labeling') { loadProcesses(_procFilter, _procPage); loadStripes() }
+  if (name === 'model')    { loadModelStats(); pollTrainingStatus() }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
@@ -879,6 +1061,7 @@ function startLiveRefresh() {
     setInterval(loadStats,    10_000),
     setInterval(loadLicenses, 30_000),
     setInterval(() => { if (_activeTab === 'labeling') { loadProcesses(); loadStripes() } }, 30_000),
+    setInterval(() => { if (_activeTab === 'model')    loadModelStats() }, 60_000),
     setInterval(tickUpdated,   1_000),
   ]
 }
@@ -1133,6 +1316,107 @@ async function downloadDataset(label) {
     loadProcesses(_procFilter, _procPage); loadStripes(); loadStats()
   } catch(e) { alert('Download failed: ' + e.message)
   } finally { btn.textContent = orig; btn.disabled = false }
+}
+
+// ── Model tab ─────────────────────────────────────────────────────────
+async function loadModelStats() {
+  try {
+    const r = await api('/admin/model/stats')
+    if (!r.ok) return
+    const d = await r.json()
+
+    const badge = document.getElementById('m-ver-badge')
+    if (badge) badge.textContent = d.version || 'No model trained'
+
+    const m = d.latest
+    if (!m) return
+
+    const pct = v => v ? (parseFloat(v) * 100).toFixed(1) + '%' : '—'
+    const fix = (v, n=3) => v ? parseFloat(v).toFixed(n) : '—'
+
+    document.getElementById('m-prec').textContent = pct(m.precision_mal)
+    document.getElementById('m-rec').textContent  = pct(m.recall_mal)
+    document.getElementById('m-f1').textContent   = pct(m.f1_mal)
+    document.getElementById('m-roc').textContent  = fix(m.roc_auc)
+    document.getElementById('m-ap').textContent   = fix(m.avg_precision)
+    document.getElementById('m-sess').textContent = m.session || '—'
+    if (m.timestamp) document.getElementById('m-ts').textContent = m.timestamp.slice(0,16).replace('T',' ')
+
+    const fmtSplit = (total, mal, ben) =>
+      `${parseInt(total)||0}  (${parseInt(mal)||0}M / ${parseInt(ben)||0}B)`
+    document.getElementById('m-ntrain').textContent = fmtSplit(m.n_train, m.n_train_mal, m.n_train_ben)
+    document.getElementById('m-ntest').textContent  = fmtSplit(m.n_test,  m.n_test_mal,  m.n_test_ben)
+    document.getElementById('m-tp').textContent = m.tp || '—'
+    document.getElementById('m-fp').textContent = m.fp || '—'
+    document.getElementById('m-fn').textContent = m.fn || '—'
+    document.getElementById('m-tn').textContent = m.tn || '—'
+
+    // Graphs — cache-bust on each refresh
+    const ts = Date.now()
+    const k  = encodeURIComponent(_key)
+    ;['g-curves', 'g-feat', 'g-roc'].forEach((id, i) => {
+      const names = ['training_curves', 'feature_importance', 'roc_pr_curves']
+      const img = document.getElementById(id)
+      if (img) { img.style.display = ''; img.src = `/admin/model/graph/${names[i]}?key=${k}&t=${ts}` }
+    })
+  } catch(e) { console.error('loadModelStats:', e) }
+}
+
+let _trainPoll = null
+
+async function startTraining() {
+  const btn    = document.getElementById('btn-train')
+  const status = document.getElementById('m-train-status')
+  btn.disabled = true; btn.textContent = 'Starting…'
+  try {
+    const r = await api('/admin/model/train', { method: 'POST', body: '{}' })
+    if (!r.ok) {
+      const d = await r.json()
+      status.style.color = 'var(--danger)'; status.textContent = d.detail || 'Failed to start'
+      btn.disabled = false; btn.textContent = 'Train Model'
+      return
+    }
+    document.getElementById('train-log-box').style.display = 'block'
+    status.style.color = 'var(--warn)'; status.textContent = 'Training…'
+    if (_trainPoll) clearInterval(_trainPoll)
+    _trainPoll = setInterval(pollTrainingStatus, 2000)
+    pollTrainingStatus()
+  } catch(e) {
+    status.style.color = 'var(--danger)'; status.textContent = e.message
+    btn.disabled = false; btn.textContent = 'Train Model'
+  }
+}
+
+async function pollTrainingStatus() {
+  try {
+    const r = await api('/admin/model/train/status')
+    if (!r.ok) return
+    const d = await r.json()
+
+    const logEl  = document.getElementById('train-log')
+    const status = document.getElementById('m-train-status')
+    const btn    = document.getElementById('btn-train')
+
+    if (logEl && d.log) {
+      logEl.textContent = d.log
+      logEl.scrollTop   = logEl.scrollHeight
+      document.getElementById('train-log-box').style.display = 'block'
+    }
+
+    if (d.running) {
+      if (btn) { btn.disabled = true; btn.textContent = 'Training…' }
+      if (status) { status.style.color = 'var(--warn)'; status.textContent = 'Training…' }
+    } else {
+      if (_trainPoll) { clearInterval(_trainPoll); _trainPoll = null }
+      if (btn) { btn.disabled = false; btn.textContent = 'Train Model' }
+      if (d.exit_code === 0) {
+        if (status) { status.style.color = 'var(--ok)'; status.textContent = 'Complete ✓' }
+        loadModelStats()
+      } else if (d.exit_code !== null && status) {
+        status.style.color = 'var(--danger)'; status.textContent = `Failed (exit ${d.exit_code})`
+      }
+    }
+  } catch {}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

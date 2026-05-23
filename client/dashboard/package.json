@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win"
+    "build": "electron-builder --win && node -e \"const fs=require('fs'),p='../../dist/';fs.renameSync(p+'Voidwatch Setup 1.0.0.exe',p+'VoidwatchSetup.exe');\""
   },
   "devDependencies": {
     "electron": "^35.7.5",
@@ -27,6 +27,10 @@
       {
         "from": "../agent/voidwatch_agent.exe",
         "to": "agent/voidwatch_agent.exe"
+      },
+      {
+        "from": "../agent/config.json",
+        "to": "agent/config.json"
       }
     ],
     "win": {

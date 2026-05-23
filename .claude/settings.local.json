@@ -71,7 +71,23 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Administrator\\\\tmp\" -Recurse -Name)",
       "Bash(Select-Object -First 50)",
       "Bash(openssl rsa *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(ls \"C:\\\\Users\\\\levvedrov\\\\.claude\\\\projects\\\\c--GitHub-voidwatch-beta-Voidwatch\\\\memory\\\\\")",
+      "Read(//c/Users/levvedrov/.claude/projects/c--GitHub-voidwatch-beta-Voidwatch/**)",
+      "PowerShell(\\(Get-Command openssl -ErrorAction SilentlyContinue\\).Source; python -c \"from cryptography.hazmat.primitives.asymmetric import rsa; print\\('cryptography ok'\\)\" 2>&1)",
+      "Bash(python -c \"import secrets; print\\(secrets.token_hex\\(32\\)\\)\")",
+      "Bash(git check-ignore *)",
+      "Bash(node -e \"const fs=require\\('fs'\\); try{fs.rmSync\\('node_modules',{recursive:true,force:true}\\); console.log\\('deleted'\\)} catch\\(e\\){console.log\\(e.message\\)}\")",
+      "Bash(netstat -ano)",
+      "Bash(awk '{print $5}')",
+      "Bash(taskkill /F /PID 11040)",
+      "PowerShell(Stop-Process -Id 11040 -Force)",
+      "Bash(npm run *)",
+      "Bash(npm start *)",
+      "Bash(tasklist /FI \"IMAGENAME eq voidwatch_agent.exe\" /NH)",
+      "PowerShell(Get-Process -Name \"voidwatch_agent\" -ErrorAction SilentlyContinue)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -TimeoutSec 3 -UseBasicParsing; $r.StatusCode } catch { \"SERVER NOT RUNNING: $_\" })",
+      "Bash(node node_modules/next/dist/bin/next build)"
     ]
   }
 }
