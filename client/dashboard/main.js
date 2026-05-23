@@ -16,10 +16,19 @@ let win, agentProc
 let _stopping          = false
 let _agentRestartDelay = 3000
 
+const _PROD_URL    = 'https://api.voidwatch.eranoid.com'
+const _DEFAULT_KEY = '4d8313223e4f6d9965618a4e3c502f55c4a912a78264fa6e211571fab11e468b'
+
 // ── Config persistence ────────────────────────────────────
 function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(getConfigPath(), 'utf8')) }
-  catch { return { serverUrl: 'https://api.voidwatch.eranoid.com', apiKey: '4d8313223e4f6d9965618a4e3c502f55c4a912a78264fa6e211571fab11e468b' } }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(getConfigPath(), 'utf8'))
+    if (!cfg.serverUrl || /^https?:\/\/(localhost|0\.0\.0\.0|127\.)/.test(cfg.serverUrl))
+      cfg.serverUrl = _PROD_URL
+    return cfg
+  } catch {
+    return { serverUrl: _PROD_URL, apiKey: _DEFAULT_KEY }
+  }
 }
 
 function saveConfig(data) {
@@ -98,7 +107,7 @@ function spawnAgent(serverUrl, apiKey) {
   }
   const env = {
     ...process.env,
-    VOIDWATCH_SERVER_URL: serverUrl || 'https://api.voidwatch.eranoid.com',
+    VOIDWATCH_SERVER_URL: serverUrl || _PROD_URL,
     VOIDWATCH_API_KEY:    apiKey    || '',
   }
   const proc = spawn(AGENT_EXE, [], {
