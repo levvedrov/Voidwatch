@@ -67,7 +67,7 @@ export default function DownloadPage() {
                 </div>
               </div>
               <a
-                href="https://api.voidwatch.eranoid.com/download/VoidwatchSetup.exe"
+                href="https://github.com/levvedrov/Voidwatch/releases/download/v1.0.0/VoidwatchSetup.exe"
                 download="VoidwatchSetup.exe"
                 className="shrink-0 inline-flex items-center gap-2 rounded-md bg-white hover:bg-white/90 px-6 py-3 text-sm font-bold tracking-wide text-black transition-colors"
               >
