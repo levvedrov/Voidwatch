@@ -3,45 +3,14 @@ import { api, esc, pageLoader } from '../api.js'
 export async function render(el) {
   el.innerHTML = pageLoader('Loading settings…')
 
-  let cfg = { process_retain_days: 7, alert_retain_days: 30, license: null }
+  let cfg = { process_retain_days: 3, alert_retain_days: 30, license: null }
   let stats = { db_size_mb: 0, db_type: '—', process_records: 0, alert_records: 0 }
   try { [cfg, stats] = await Promise.all([api.getSettings(), api.getStats()]) } catch {}
   const lic = cfg.license || { tier: 'free', display: 'Free', features: [], customer: '', expires: null }
 
-  let elCfg = { serverUrl: 'http://0.0.0.0:8000', apiKey: '' }
-  try { elCfg = await __vw.getConfig() } catch {}
-
   el.innerHTML = `
     <div class="page-title">Settings</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:760px">
-
-      <div class="panel" style="grid-column:1/-1">
-        <div class="panel-header">Connection</div>
-        <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
-          <div class="settings-row">
-            <div>
-              <div style="font-size:13px;color:var(--text)">Server URL</div>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Voidwatch backend address</div>
-            </div>
-            <input id="inp-server" class="toolbar-input" type="text"
-                   value="${esc(elCfg.serverUrl || '')}"
-                   style="width:220px;font-family:var(--font-mono);font-size:11px" />
-          </div>
-          <div class="settings-row">
-            <div>
-              <div style="font-size:13px;color:var(--text)">API Key</div>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">From server .env VOIDWATCH_API_KEY</div>
-            </div>
-            <input id="inp-apikey" class="toolbar-input" type="password"
-                   value="${esc(elCfg.apiKey || '')}"
-                   style="width:220px;font-family:var(--font-mono);font-size:11px" />
-          </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <button class="action-btn" id="btn-conn-save">Save & Reload</button>
-            <span id="msg-conn" style="font-size:12px;color:var(--low);display:none">Saved — reloading…</span>
-          </div>
-        </div>
-      </div>
 
       <div class="panel">
         <div class="panel-header">Data Retention</div>
@@ -86,8 +55,8 @@ export async function render(el) {
           ${lic.expires  ? `<div class="settings-stat-row"><span>Expires</span><span style="font-size:11px">${esc(lic.expires.slice(0,10))}</span></div>` : ''}
           <div class="settings-stat-row">
             <span>Features</span>
-            <span style="font-size:11px;color:var(--text-sec)">
-              ${lic.features.length ? lic.features.join(', ') : 'rules only'}
+            <span style="font-size:11px;color:var(--text-muted)">
+              Refer to <a href="https://voidwatch.eranoid.com" target="_blank" style="color:var(--text-sec)">voidwatch.eranoid.com</a> to change your plan
             </span>
           </div>
           <div style="margin-top:8px;display:flex;align-items:center;gap:10px">
@@ -134,26 +103,6 @@ export async function render(el) {
 
     </div>
   `
-
-  // Save connection
-  el.querySelector('#btn-conn-save').addEventListener('click', async () => {
-    const serverUrl = el.querySelector('#inp-server').value.trim()
-    const apiKey    = el.querySelector('#inp-apikey').value.trim()
-    if (!serverUrl) return
-    try {
-      await __vw.saveConfig({ serverUrl, apiKey })
-      localStorage.setItem('voidwatch_server_url', serverUrl)
-      localStorage.setItem('voidwatch_api_key',    apiKey)
-      const msg = el.querySelector('#msg-conn')
-      msg.style.display = 'inline'
-      setTimeout(() => location.reload(), 800)
-    } catch (e) {
-      const msg = el.querySelector('#msg-conn')
-      msg.textContent = 'Failed: ' + e.message
-      msg.style.color = 'var(--crit)'
-      msg.style.display = 'inline'
-    }
-  })
 
   // Save retention
   el.querySelector('#btn-save').addEventListener('click', async () => {
