@@ -61,7 +61,7 @@ def _check_admin(
 @admin_router.get("/licenses", dependencies=[Depends(_check_admin)])
 def list_licenses(db: Session = Depends(get_db)):
     rows = db.query(IssuedLicense).order_by(IssuedLicense.issued_at.desc()).all()
-    active_raw = _lic.license.raw
+    active_raw = ""  # licenses are now per-client; no server-side active key
     now = datetime.now(timezone.utc)
     result = []
     for r in rows:
@@ -222,10 +222,9 @@ def list_processes(
     all_labels     = {pl.process_name: pl for pl in db.query(ProcessLabel).all() if pl.process_name}
     exported_names = {name for name, pl in all_labels.items() if pl.exported}
 
-    # Latest record per unique process name (ML ≥ 80%)
+    # Latest record per unique process name — all processes, not just high-ML
     latest_id_subq = (
         db.query(func.max(ProcessRecord.id))
-          .filter(ProcessRecord.ml_score >= 0.80)
           .group_by(ProcessRecord.name)
           .scalar_subquery()
     )
