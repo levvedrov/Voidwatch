@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('__vw', {
   getConfig:   ()  =>     ipcRenderer.invoke('config:get'),
   saveConfig:  (d) =>     ipcRenderer.invoke('config:set', d),
   checkServer: (url) =>   ipcRenderer.invoke('config:check-server', url),
+  getAgentId:  ()  =>     ipcRenderer.invoke('agent:get-id'),
 })

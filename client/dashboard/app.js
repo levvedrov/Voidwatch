@@ -83,6 +83,12 @@ async function startup() {
     if (cfg.apiKey)    localStorage.setItem('voidwatch_api_key',    cfg.apiKey)
   } catch {}
 
+  // Read local agent ID so all API calls are scoped to this machine
+  try {
+    const id = await __vw.getAgentId()
+    if (id) localStorage.setItem('voidwatch_agent_id', id)
+  } catch {}
+
   content.style.opacity = '1'
   content.innerHTML = `
     <div class="ld-screen">

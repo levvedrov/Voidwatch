@@ -37,9 +37,23 @@ function saveConfig(data) {
   return cfg
 }
 
+// ── Agent ID ──────────────────────────────────────────────
+function readAgentId() {
+  const os   = require('os')
+  const paths = [
+    path.join(ROOT, 'agent', '.agent_id'),
+    path.join(os.homedir(), '.voidwatch', '.agent_id'),
+  ]
+  for (const p of paths) {
+    try { const v = fs.readFileSync(p, 'utf8').trim(); if (v) return v } catch {}
+  }
+  return ''
+}
+
 // ── IPC handlers ──────────────────────────────────────────
-ipcMain.handle('config:get',  ()      => loadConfig())
-ipcMain.handle('config:set',  (_, d)  => saveConfig(d))
+ipcMain.handle('config:get',    ()      => loadConfig())
+ipcMain.handle('config:set',    (_, d)  => saveConfig(d))
+ipcMain.handle('agent:get-id',  ()      => readAgentId())
 ipcMain.handle('config:check-server', async (_, url) => {
   return new Promise(resolve => {
     const mod = (url || '').startsWith('https') ? https : http

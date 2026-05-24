@@ -318,7 +318,8 @@ export async function render(el) {
     const slice   = filtered.slice(start, start + PAGE)
     const hasNext = start + PAGE < filtered.length
 
-    el.querySelector('#al-sub').textContent =
+    const subEl = el.querySelector('#al-sub')
+    if (subEl) subEl.textContent =
       `${filtered.length} total · page ${page + 1} of ${Math.max(1, Math.ceil(filtered.length / PAGE))}`
 
     if (filtered.length === 0) {

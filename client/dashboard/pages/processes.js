@@ -58,7 +58,8 @@ export async function render(el) {
     const start      = page * PAGE
     const totalPages = Math.ceil(visible.length / PAGE)
 
-    el.querySelector('#proc-count').textContent =
+    const countEl = el.querySelector('#proc-count')
+    if (countEl) countEl.textContent =
       `${visible.length} of ${procs.length}` +
       (totalPages > 1 ? ` — page ${page + 1}/${totalPages}` : '')
 

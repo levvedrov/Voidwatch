@@ -13,6 +13,10 @@ function _licenseKey() {
   try { return localStorage.getItem('voidwatch_license_key') || '' } catch { return '' }
 }
 
+export function myAgentId() {
+  try { return localStorage.getItem('voidwatch_agent_id') || '' } catch { return '' }
+}
+
 function _headers(extra = {}) {
   const key = _apiKey()
   const lic = _licenseKey()
@@ -59,10 +63,10 @@ export const api = {
     try { const r = await fetch(_serverUrl() + '/health'); return r.ok }
     catch { return false }
   },
-  alerts(params = {})       { return get('/alerts?'    + new URLSearchParams(params)) },
-  alertProcesses(params = {}) { return get('/processes/alerts?' + new URLSearchParams(params)) },
-  processes(params = {})    { return get('/processes?' + new URLSearchParams(params)) },
-  agents()                  { return get('/agents') },
+  alerts(params = {})         { const id = myAgentId(); if (id) params = { ...params, agent_id: id }; return get('/alerts?' + new URLSearchParams(params)) },
+  alertProcesses(params = {}) { const id = myAgentId(); if (id) params = { ...params, agent_id: id }; return get('/processes/alerts?' + new URLSearchParams(params)) },
+  processes(params = {})      { const id = myAgentId(); if (id) params = { ...params, agent_id: id }; return get('/processes?' + new URLSearchParams(params)) },
+  agents()                    { return get('/agents') },
   timeline(params = {})     { return get('/timeline?'  + new URLSearchParams(params)) },
   getSettings()             { return get('/settings') },
   activateLicense(key)      { return post('/license/activate', { key }) },

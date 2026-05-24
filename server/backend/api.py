@@ -263,27 +263,24 @@ def get_processes(
 
 @router.get("/processes/alerts", response_model=list[ProcessOut], dependencies=[Depends(_check_auth)])
 def get_alert_processes(
-    raw: bool = Query(False),
-    db: Session = Depends(get_db),
+    raw:      bool         = Query(False),
+    agent_id: Optional[str] = Query(None),
+    db:       Session      = Depends(get_db),
 ):
     """
     raw=false (default): one row per unique process name, latest record.
     raw=true: every record with ml_score >= 0.80, newest first (for timeline).
     """
     if raw:
-        rows = (
-            db.query(ProcessRecord)
-              .filter(ProcessRecord.ml_score >= 0.80)
-              .order_by(ProcessRecord.timestamp.desc())
-              .all()
-        )
+        q = db.query(ProcessRecord).filter(ProcessRecord.ml_score >= 0.80)
+        if agent_id:
+            q = q.filter(ProcessRecord.agent_id == agent_id)
+        rows = q.order_by(ProcessRecord.timestamp.desc()).all()
     else:
-        subq = (
-            db.query(func.max(ProcessRecord.id))
-              .filter(ProcessRecord.ml_score >= 0.80)
-              .group_by(ProcessRecord.name)
-              .scalar_subquery()
-        )
+        sq = db.query(func.max(ProcessRecord.id)).filter(ProcessRecord.ml_score >= 0.80)
+        if agent_id:
+            sq = sq.filter(ProcessRecord.agent_id == agent_id)
+        subq = sq.group_by(ProcessRecord.name).scalar_subquery()
         rows = (
             db.query(ProcessRecord)
               .filter(ProcessRecord.id.in_(subq))
