@@ -222,9 +222,10 @@ def list_processes(
     all_labels     = {pl.process_name: pl for pl in db.query(ProcessLabel).all() if pl.process_name}
     exported_names = {name for name, pl in all_labels.items() if pl.exported}
 
-    # Latest record per unique process name — all processes, not just high-ML
+    # Latest record per unique process name with ML score ≥ 80%
     latest_id_subq = (
         db.query(func.max(ProcessRecord.id))
+          .filter(ProcessRecord.ml_score >= 0.80)
           .group_by(ProcessRecord.name)
           .scalar_subquery()
     )
