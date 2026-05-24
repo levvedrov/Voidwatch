@@ -602,4 +602,4 @@ Do not use Voidwatch for unauthorized monitoring, credential collection, surveil
 
 Project: **Voidwatch**  
 Founder/Developer: **Lev Vedrov**  
-GitHub: `https://github.com/<your-username>`
+GitHub: `https://github.com/levvedrov`
