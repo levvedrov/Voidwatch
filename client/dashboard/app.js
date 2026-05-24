@@ -216,6 +216,7 @@ function showLicenseScreen() {
     content.style.opacity = '1'
 
     content.querySelector('#lic-skip').addEventListener('click', () => {
+      localStorage.removeItem('voidwatch_license_key')
       content.style.opacity = '0'
       setTimeout(resolve, 140)
     })
@@ -230,6 +231,7 @@ function showLicenseScreen() {
       btn.disabled = true
       try {
         const lic = await api.activateLicense(key)
+        localStorage.setItem('voidwatch_license_key', key)
         const tier = (lic.display || lic.tier || 'pro').toUpperCase()
         const isPaid = !['free'].includes((lic.tier || '').toLowerCase())
 

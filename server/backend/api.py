@@ -102,12 +102,17 @@ def license_activate(payload: dict):
 
 @router.delete("/license", dependencies=[Depends(_check_auth)])
 def license_deactivate():
-    from license import _LICENSE_FILE, _free
-    import license as _license_mod
-    if _LICENSE_FILE.exists():
-        _LICENSE_FILE.unlink()
-    _license_mod.license = _free()
     return {"tier": "free"}
+
+
+def _req_license(x_license_key: str = Header(default="")) -> _lic.License:
+    """Resolve per-request license from X-License-Key header sent by the dashboard."""
+    if x_license_key:
+        try:
+            return _lic._parse(x_license_key.strip())
+        except ValueError:
+            pass
+    return _lic._free()
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +214,7 @@ def receive_telemetry(payload: TelemetryPayload, db: Session = Depends(get_db)):
         return {"received": len(payload.processes), "alerts_generated": 0, "mode": "collect_only"}
 
     alerts = score_batch(payload.agent_id, payload.processes, db=db,
-                         ml_enabled=_lic.license.can("ml"))
+                         ml_enabled=True)
     cutoff  = ts - _DEDUP_WINDOW
     added   = 0
     for a in alerts:
@@ -371,8 +376,8 @@ def get_timeline(
 # ---------------------------------------------------------------------------
 
 @router.get("/settings")
-def get_settings():
-    return {**_cfg.load(), "license": _lic.license.to_dict()}
+def get_settings(req_lic: _lic.License = Depends(_req_license)):
+    return {**_cfg.load(), "license": req_lic.to_dict()}
 
 
 @router.put("/settings", dependencies=[Depends(_check_auth)])
@@ -497,8 +502,9 @@ def revoke_agent(agent_id: str, reason: str = "", db: Session = Depends(get_db))
 # ---------------------------------------------------------------------------
 
 @router.post("/alerts/{alert_id}/feedback", dependencies=[Depends(_check_auth)])
-def submit_feedback(alert_id: int, payload: FeedbackPayload, db: Session = Depends(get_db)):
-    _lic.license.require("feedback")
+def submit_feedback(alert_id: int, payload: FeedbackPayload, db: Session = Depends(get_db),
+                    req_lic: _lic.License = Depends(_req_license)):
+    req_lic.require("feedback")
     valid = {"true_positive", "false_positive", "ignore", "suspicious_ok"}
     if payload.feedback_type not in valid:
         raise HTTPException(status_code=400, detail=f"feedback_type must be one of {valid}")
@@ -539,8 +545,9 @@ def get_allowlist(db: Session = Depends(get_db)):
 
 
 @router.post("/allowlist", response_model=AllowlistOut, dependencies=[Depends(_check_auth)])
-def add_allowlist(entry: AllowlistEntry, db: Session = Depends(get_db)):
-    _lic.license.require("allowlist")
+def add_allowlist(entry: AllowlistEntry, db: Session = Depends(get_db),
+                  req_lic: _lic.License = Depends(_req_license)):
+    req_lic.require("allowlist")
     valid = {"process_name", "hash", "cmdline"}
     if entry.kind not in valid:
         raise HTTPException(status_code=400, detail=f"kind must be one of {valid}")
@@ -570,8 +577,9 @@ def remove_allowlist(entry_id: int, db: Session = Depends(get_db)):
 def export_alerts_csv(
     agent_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    req_lic: _lic.License = Depends(_req_license),
 ):
-    _lic.license.require("export")
+    req_lic.require("export")
     q = db.query(AlertRecord)
     if agent_id:
         q = q.filter(AlertRecord.agent_id == agent_id)
@@ -597,8 +605,9 @@ def export_alerts_csv(
 def export_telemetry_csv(
     agent_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    req_lic: _lic.License = Depends(_req_license),
 ):
-    _lic.license.require("export")
+    req_lic.require("export")
     q = db.query(ProcessRecord)
     if agent_id:
         q = q.filter(ProcessRecord.agent_id == agent_id)

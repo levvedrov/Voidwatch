@@ -140,33 +140,20 @@ def _parse(raw: str) -> License:
 
 
 def activate(raw: str) -> License:
-    """Validate key, persist it, reload the global singleton. Raises ValueError on bad key."""
-    global license
+    """Validate key and return License. Not persisted server-side — clients own their key."""
     lic = _parse(raw.strip())
-    _LICENSE_FILE.write_text(json.dumps({"key": raw.strip()}), encoding="utf-8")
-    license = lic
-    log.info("[license] Activated %s — customer: %s", lic.tier.upper(), lic.customer)
+    log.info("[license] Validated %s — customer: %s", lic.tier.upper(), lic.customer)
     return lic
 
 
 def load() -> License:
-    # env var takes priority
+    # Server-wide license via env var only (not license.json — per-client licensing)
     raw = os.environ.get("VOIDWATCH_LICENSE_KEY", "").strip()
-
-    # fall back to persisted file
-    if not raw and _LICENSE_FILE.exists():
-        try:
-            raw = json.loads(_LICENSE_FILE.read_text(encoding="utf-8")).get("key", "")
-        except Exception:
-            raw = ""
-
     if not raw:
-        log.info("[license] No key — Free tier")
         return _free()
-
     try:
         lic = _parse(raw)
-        log.info("[license] %s tier — customer: %s", lic.tier.upper(), lic.customer or "(none)")
+        log.info("[license] Server %s tier — customer: %s", lic.tier.upper(), lic.customer or "(none)")
         return lic
     except ValueError as e:
         log.warning("[license] %s — falling back to Free", e)

@@ -9,9 +9,16 @@ function _apiKey() {
   try { return localStorage.getItem('voidwatch_api_key') || _DEFAULT_KEY } catch { return _DEFAULT_KEY }
 }
 
+function _licenseKey() {
+  try { return localStorage.getItem('voidwatch_license_key') || '' } catch { return '' }
+}
+
 function _headers(extra = {}) {
   const key = _apiKey()
-  return key ? { ...extra, 'X-API-Key': key } : extra
+  const lic = _licenseKey()
+  const h = key ? { ...extra, 'X-API-Key': key } : { ...extra }
+  if (lic) h['X-License-Key'] = lic
+  return h
 }
 
 async function get(path) {

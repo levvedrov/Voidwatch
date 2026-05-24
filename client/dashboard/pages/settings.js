@@ -129,6 +129,7 @@ export async function render(el) {
       const msg = el.querySelector('#msg-deactivate')
       try {
         await api.deactivateLicense()
+        localStorage.removeItem('voidwatch_license_key')
         msg.style.color = 'var(--low)'
         msg.textContent = 'Deactivated'
         msg.style.display = 'inline'
