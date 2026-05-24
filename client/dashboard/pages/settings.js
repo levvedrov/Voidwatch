@@ -53,11 +53,10 @@ export async function render(el) {
           </div>
           ${lic.customer ? `<div class="settings-stat-row"><span>Customer</span><span>${esc(lic.customer)}</span></div>` : ''}
           ${lic.expires  ? `<div class="settings-stat-row"><span>Expires</span><span style="font-size:11px">${esc(lic.expires.slice(0,10))}</span></div>` : ''}
-          <div class="settings-stat-row">
-            <span>Features</span>
-            <span style="font-size:11px;color:var(--text-muted)">
-              Refer to <a href="https://voidwatch.eranoid.com" target="_blank" style="color:var(--text-sec)">voidwatch.eranoid.com</a> to change your plan
-            </span>
+          <div style="margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text-muted);line-height:1.5">
+            To change your plan, visit
+            <a href="https://voidwatch.eranoid.com" target="_blank"
+               style="color:var(--text-sec);text-decoration:underline;text-underline-offset:2px">voidwatch.eranoid.com</a>
           </div>
           <div style="margin-top:8px;display:flex;align-items:center;gap:10px">
             ${lic.tier !== 'free' ? `

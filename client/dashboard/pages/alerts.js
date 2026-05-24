@@ -228,7 +228,7 @@ export async function render(el) {
         Alerts <span class="sub" id="al-sub"></span>
       </div>
       <div class="toolbar-controls">
-        <span style="font-size:12px;color:var(--text-muted)">ML ≥ 80% · all time</span>
+        <span style="font-size:12px;color:var(--text-muted)">Risk ≥ 80% · all time</span>
       </div>
     </div>
 
@@ -322,7 +322,7 @@ export async function render(el) {
       `${filtered.length} total · page ${page + 1} of ${Math.max(1, Math.ceil(filtered.length / PAGE))}`
 
     if (filtered.length === 0) {
-      wrap.innerHTML = `<div class="panel"><div class="empty">No high-risk alerts (ML ≥ 80%)</div></div>`
+      wrap.innerHTML = `<div class="panel"><div class="empty">No high-risk alerts (Risk ≥ 80%)</div></div>`
       el.querySelector('#al-pag').innerHTML = ''
       return
     }
@@ -338,7 +338,7 @@ export async function render(el) {
       <th>Process</th>
       <th>Parent</th>
       <th>Path</th>
-      <th>ML</th>
+      <th>Risk</th>
     </tr></thead>`
 
     const tbody = document.createElement('tbody')
@@ -400,7 +400,7 @@ export async function render(el) {
     const ips = Array.isArray(a.destination_ips) ? a.destination_ips : []
 
     const flags = []
-    flags.push(`ML score ${ml}% exceeds 80% detection threshold`)
+    flags.push(`Risk score ${ml}% exceeds 80% detection threshold`)
     if (!a.is_signed)                  flags.push('Binary is not code-signed')
     if ((a.connection_count ?? 0) > 0) flags.push(`${a.connection_count} outbound network connection${a.connection_count !== 1 ? 's' : ''}`)
     if (ips.length)                    flags.push(`Remote endpoints: ${ips.slice(0, 4).map(esc).join(', ')}${ips.length > 4 ? ` +${ips.length - 4} more` : ''}`)
