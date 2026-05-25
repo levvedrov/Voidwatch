@@ -93,8 +93,9 @@ class AgentRecord(Base):
     username     = Column(String)
     first_seen   = Column(DateTime, default=_utcnow)
     last_seen    = Column(DateTime, default=_utcnow)
-    mode         = Column(String, default="detect")       # collect_only | detect | debug
-    agent_secret = Column(String, nullable=True)
+    mode             = Column(String, default="detect")   # collect_only | detect | debug
+    agent_secret     = Column(String, nullable=True)
+    license_customer = Column(String, nullable=True)
 
 
 class EnrollmentToken(Base):
@@ -167,8 +168,9 @@ class ProcessLabel(Base):
 def _migrate(conn):
     """Add columns that exist in the ORM but not yet in the DB (SQLite has no IF NOT EXISTS for columns)."""
     migrations = [
-        ("agents",           "mode",           "TEXT DEFAULT 'detect'"),
-        ("agents",           "agent_secret",   "TEXT"),
+        ("agents",           "mode",             "TEXT DEFAULT 'detect'"),
+        ("agents",           "agent_secret",    "TEXT"),
+        ("agents",           "license_customer","TEXT"),
         ("alert_feedback",   "agent_id",       "TEXT"),
         ("alert_feedback",   "process_name",   "TEXT"),
         ("alerts",           "ml_score",       "REAL DEFAULT 0"),

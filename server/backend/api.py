@@ -252,8 +252,20 @@ def get_processes(
     agent_id: Optional[str] = Query(None),
     limit: int   = Query(200, ge=1, le=1000),
     offset: int  = Query(0, ge=0),
+    x_license_key: str = Header(default=""),
     db: Session  = Depends(get_db),
 ):
+    # Track which license is used by which agent so admin panel can show online status
+    if agent_id and x_license_key:
+        try:
+            lic = _lic._parse(x_license_key.strip())
+            agent = db.query(AgentRecord).filter(AgentRecord.agent_id == agent_id).first()
+            if agent and agent.license_customer != lic.customer:
+                agent.license_customer = lic.customer
+                db.commit()
+        except Exception:
+            pass
+
     q = db.query(ProcessRecord)
     if agent_id:
         q = q.filter(ProcessRecord.agent_id == agent_id)

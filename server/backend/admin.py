@@ -61,12 +61,25 @@ def _check_admin(
 @admin_router.get("/licenses", dependencies=[Depends(_check_admin)])
 def list_licenses(db: Session = Depends(get_db)):
     rows = db.query(IssuedLicense).order_by(IssuedLicense.issued_at.desc()).all()
-    active_raw = ""  # licenses are now per-client; no server-side active key
     now = datetime.now(timezone.utc)
+    threshold = (now - timedelta(seconds=60)).replace(tzinfo=None)
+
+    # Find customers whose agents checked in within last 60 s
+    online_customers = {
+        r[0] for r in
+        db.query(AgentRecord.license_customer)
+          .filter(
+              AgentRecord.last_seen >= threshold,
+              AgentRecord.license_customer.isnot(None),
+              AgentRecord.license_customer != "",
+          ).all()
+        if r[0]
+    }
+
     result = []
     for r in rows:
         exp = r.expires
-        expired = bool(exp and datetime.fromisoformat(exp.isoformat()).replace(tzinfo=timezone.utc) < now)
+        expired = bool(exp and exp < now.replace(tzinfo=None))
         result.append({
             "id":        r.id,
             "customer":  r.customer,
@@ -76,10 +89,39 @@ def list_licenses(db: Session = Depends(get_db)):
             "expires":   r.expires.isoformat() if r.expires else None,
             "note":      r.note or "",
             "token":     r.jwt_token,
-            "is_active": r.jwt_token == active_raw,
+            "is_active": False,
             "expired":   expired,
+            "online":    r.customer in online_customers,
         })
     return result
+
+
+@admin_router.get("/activity", dependencies=[Depends(_check_admin)])
+def agent_activity(db: Session = Depends(get_db)):
+    """Hourly distinct-agent counts for the last 24 hours, derived from process timestamps."""
+    from sqlalchemy import text as _text
+    now    = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now - timedelta(hours=24)
+
+    raw = db.execute(_text(
+        "SELECT strftime('%Y-%m-%dT%H:00:00', timestamp) AS hour,"
+        "       COUNT(DISTINCT agent_id) AS cnt"
+        "  FROM processes"
+        " WHERE timestamp >= :cutoff"
+        " GROUP BY hour ORDER BY hour"
+    ), {"cutoff": cutoff.isoformat()}).fetchall()
+
+    counts = {r[0]: r[1] for r in raw}
+
+    # Build a complete 25-slot list so the chart has no gaps
+    hours = []
+    h = cutoff.replace(minute=0, second=0, microsecond=0)
+    end = now.replace(minute=0, second=0, microsecond=0)
+    while h <= end:
+        key = h.strftime("%Y-%m-%dT%H:00:00")
+        hours.append({"hour": key, "count": counts.get(key, 0)})
+        h += timedelta(hours=1)
+    return hours
 
 
 @admin_router.post("/licenses", dependencies=[Depends(_check_admin)])
@@ -618,6 +660,15 @@ _HTML = r"""<!DOCTYPE html>
   .stripe-body td { padding:8px 12px; font-size:12px }
   .stripe-body tr:first-child td { border-top:none }
 
+  /* online/offline indicators */
+  .status-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle }
+  .online-dot  { background:var(--ok);     box-shadow:0 0 0 2px rgba(34,197,94,.25) }
+  .offline-dot { background:var(--danger); box-shadow:0 0 0 2px rgba(239,68,68,.2) }
+
+  /* activity chart */
+  .chart-wrap { position:relative; height:120px; margin-top:4px }
+  #activity-canvas { display:block; width:100%; height:120px }
+
   /* misc */
   .err   { color:var(--danger); font-size:12px; margin-top:8px }
   .ok    { color:var(--ok);     font-size:12px; margin-top:8px }
@@ -765,6 +816,15 @@ _HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- Activity chart — online agents per hour over last 24 h -->
+    <div class="panel-box" style="margin-top:16px">
+      <h2>Agent Activity — Last 24 Hours</h2>
+      <div class="chart-wrap">
+        <canvas id="activity-canvas"></canvas>
+      </div>
+      <div id="activity-empty" style="display:none;text-align:center;padding:20px 0;color:var(--text-muted);font-size:12px">No activity data yet</div>
+    </div>
+
   </div>
 
   <!-- ── Issue License tab ── -->
@@ -818,22 +878,23 @@ _HTML = r"""<!DOCTYPE html>
       <table style="table-layout:fixed">
         <colgroup>
           <col style="width:4%">
-          <col style="width:15%">
-          <col style="width:9%">
-          <col style="width:10%">
-          <col style="width:10%">
-          <col style="width:9%">
-          <col style="width:22%">
-          <col style="width:13%">
+          <col style="width:14%">
           <col style="width:8%">
+          <col style="width:9%">
+          <col style="width:9%">
+          <col style="width:10%">
+          <col style="width:9%">
+          <col style="width:20%">
+          <col style="width:10%">
+          <col style="width:7%">
         </colgroup>
         <thead><tr>
           <th>#</th><th>Customer</th><th>Tier</th>
-          <th>Issued</th><th>Expires</th><th>Status</th>
+          <th>Issued</th><th>Expires</th><th>Online</th><th>Status</th>
           <th>Key</th><th>Note</th><th></th>
         </tr></thead>
         <tbody id="lic-tbody">
-          <tr><td colspan="9" class="empty">Loading…</td></tr>
+          <tr><td colspan="10" class="empty">Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -1051,7 +1112,7 @@ let _refreshTimers = []
 async function showPanel() {
   document.getElementById('login').style.display = 'none'
   document.getElementById('panel').style.display = 'flex'
-  await Promise.all([loadStats(), loadLicenses()])
+  await Promise.all([loadStats(), loadLicenses(), loadActivity()])
   startLiveRefresh()
 }
 
@@ -1060,10 +1121,107 @@ function startLiveRefresh() {
   _refreshTimers = [
     setInterval(loadStats,    10_000),
     setInterval(loadLicenses, 30_000),
+    setInterval(loadActivity, 60_000),
     setInterval(() => { if (_activeTab === 'labeling') { loadProcesses(); loadStripes() } }, 30_000),
     setInterval(() => { if (_activeTab === 'model')    loadModelStats() }, 60_000),
     setInterval(tickUpdated,   1_000),
   ]
+}
+
+// ── Activity chart ────────────────────────────────────────────
+async function loadActivity() {
+  try {
+    const r = await api('/admin/activity')
+    if (!r.ok) return
+    const data = await r.json()
+    drawActivityChart(data)
+  } catch {}
+}
+
+function drawActivityChart(data) {
+  const canvas = document.getElementById('activity-canvas')
+  const empty  = document.getElementById('activity-empty')
+  if (!canvas) return
+
+  const maxCount = Math.max(...data.map(d => d.count))
+  if (maxCount === 0) {
+    canvas.style.display = 'none'
+    if (empty) empty.style.display = 'block'
+    return
+  }
+  canvas.style.display = 'block'
+  if (empty) empty.style.display = 'none'
+
+  const dpr = window.devicePixelRatio || 1
+  const W   = canvas.offsetWidth  || 800
+  const H   = 120
+  canvas.width  = W * dpr
+  canvas.height = H * dpr
+  canvas.style.width  = W + 'px'
+  canvas.style.height = H + 'px'
+
+  const ctx = canvas.getContext('2d')
+  ctx.scale(dpr, dpr)
+  ctx.clearRect(0, 0, W, H)
+
+  const PAD   = { top: 12, right: 8, bottom: 22, left: 28 }
+  const cw    = W - PAD.left - PAD.right
+  const ch    = H - PAD.top  - PAD.bottom
+  const n     = data.length
+  const barW  = Math.max(2, cw / n - 1)
+  const step  = cw / n
+
+  // Subtle grid lines
+  ctx.strokeStyle = 'rgba(30,36,53,0.8)'
+  ctx.lineWidth   = 1
+  for (let v = 0; v <= maxCount; v++) {
+    const y = PAD.top + ch - (v / maxCount) * ch
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + cw, y); ctx.stroke()
+  }
+
+  // Bars
+  data.forEach((d, i) => {
+    const x    = PAD.left + i * step
+    const barH = (d.count / maxCount) * ch
+    const y    = PAD.top + ch - barH
+
+    if (d.count > 0) {
+      // Fill
+      const grad = ctx.createLinearGradient(0, y, 0, y + barH)
+      grad.addColorStop(0, 'rgba(34,197,94,0.55)')
+      grad.addColorStop(1, 'rgba(34,197,94,0.08)')
+      ctx.fillStyle = grad
+      ctx.fillRect(x, y, barW, barH)
+      // Top cap
+      ctx.fillStyle = '#22c55e'
+      ctx.fillRect(x, y, barW, 2)
+    } else {
+      ctx.fillStyle = 'rgba(30,36,53,0.5)'
+      ctx.fillRect(x, PAD.top + ch - 2, barW, 2)
+    }
+  })
+
+  // Y-axis labels
+  ctx.fillStyle    = '#4a5568'
+  ctx.font         = `${10 * dpr / dpr}px Consolas, monospace`
+  ctx.textAlign    = 'right'
+  ctx.textBaseline = 'middle'
+  const yTicks = maxCount <= 4 ? maxCount : 4
+  for (let t = 0; t <= yTicks; t++) {
+    const v = Math.round((t / yTicks) * maxCount)
+    const y = PAD.top + ch - (v / maxCount) * ch
+    ctx.fillText(v, PAD.left - 4, y)
+  }
+
+  // X-axis hour labels (every 4 h)
+  ctx.textAlign    = 'center'
+  ctx.textBaseline = 'top'
+  data.forEach((d, i) => {
+    if (i % 4 !== 0) return
+    const x    = PAD.left + i * step + barW / 2
+    const hour = d.hour.slice(11, 16)
+    ctx.fillText(hour, x, PAD.top + ch + 5)
+  })
 }
 
 function tickUpdated() {
@@ -1119,11 +1277,13 @@ async function loadLicenses() {
     if (!r.ok) return
     const rows = await r.json()
     const tb = document.getElementById('lic-tbody')
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">No licenses issued yet</td></tr>'; return }
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="10" class="empty">No licenses issued yet</td></tr>'; return }
     tb.innerHTML = rows.map(l => {
-      const status  = l.expired   ? '<span class="badge badge-expired">Expired</span>'
-                    : l.is_active ? '<span class="badge badge-active">Active</span>'
-                    :               '<span style="color:var(--text-muted);font-size:12px">—</span>'
+      const onlineBadge = l.online
+        ? '<span class="status-dot online-dot"></span><span style="color:var(--ok);font-size:12px;font-weight:600">Online</span>'
+        : '<span class="status-dot offline-dot"></span><span style="color:var(--danger);font-size:12px">Offline</span>'
+      const status  = l.expired ? '<span class="badge badge-expired">Expired</span>'
+                    :             '<span style="color:var(--text-muted);font-size:12px">—</span>'
       const expires = l.expires ? l.expires.slice(0,10) : '<span style="color:var(--text-muted)">Never</span>'
       const short   = l.token.slice(0,28) + '…'
       return `<tr>
@@ -1131,7 +1291,9 @@ async function loadLicenses() {
         <td style="font-weight:600">${esc(l.customer)}</td>
         <td>${tierBadge(l.tier)}</td>
         <td style="color:var(--text-sec)">${l.issued_at ? l.issued_at.slice(0,10) : '—'}</td>
-        <td>${expires}</td><td>${status}</td>
+        <td>${expires}</td>
+        <td>${onlineBadge}</td>
+        <td>${status}</td>
         <td><span class="mono" title="${esc(l.token)}">${short}</span>
             <button class="btn btn-copy" onclick="copyTok(${l.id})">Copy</button></td>
         <td style="color:var(--text-muted);font-size:12px">${esc(l.note)}</td>
