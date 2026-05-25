@@ -260,33 +260,35 @@ def list_processes(
     limit:  int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    # Key labels by process_name so they survive new agent batches (new record IDs)
+    # Load labels once — small table, fast
     all_labels     = {pl.process_name: pl for pl in db.query(ProcessLabel).all() if pl.process_name}
-    exported_names = {name for name, pl in all_labels.items() if pl.exported}
+    exported_names = {n for n, pl in all_labels.items() if pl.exported}
 
-    # Latest record per unique process name
-    latest_id_subq = (
+    # Latest id per unique name — ix_processes_name makes GROUP BY fast
+    latest_subq = (
         db.query(func.max(ProcessRecord.id))
           .group_by(ProcessRecord.name)
           .scalar_subquery()
     )
-    q = db.query(ProcessRecord).filter(ProcessRecord.id.in_(latest_id_subq))
+    q = db.query(ProcessRecord).filter(ProcessRecord.id.in_(latest_subq))
 
     if exported_names:
         q = q.filter(ProcessRecord.name.notin_(exported_names))
 
     if filter == "unverified":
-        labeled_names = {name for name, pl in all_labels.items()
+        labeled_names = {n for n, pl in all_labels.items()
                          if pl.label != "unverified" and not pl.exported}
         if labeled_names:
             q = q.filter(ProcessRecord.name.notin_(labeled_names))
     elif filter in ("malicious", "benign"):
-        target_names = {name for name, pl in all_labels.items()
+        target_names = {n for n, pl in all_labels.items()
                         if pl.label == filter and not pl.exported}
-        q = q.filter(ProcessRecord.name.in_(target_names)) if target_names else q.filter(False)
+        if not target_names:
+            return {"total": 0, "page": page, "limit": limit, "items": []}
+        q = q.filter(ProcessRecord.name.in_(target_names))
 
     total = q.count()
-    rows  = q.order_by(ProcessRecord.timestamp.desc()) \
+    rows  = q.order_by(ProcessRecord.ml_score.desc(), ProcessRecord.timestamp.desc()) \
              .offset((page - 1) * limit).limit(limit).all()
 
     items = []

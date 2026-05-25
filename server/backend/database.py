@@ -192,6 +192,9 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:
         _migrate(conn)
+        # Indexes for labeling queries — safe to run repeatedly
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_processes_name     ON processes(name)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_processes_ml_score ON processes(ml_score)"))
         conn.commit()
 
 
