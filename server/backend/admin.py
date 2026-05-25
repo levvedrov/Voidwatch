@@ -288,7 +288,7 @@ def list_processes(
         q = q.filter(ProcessRecord.name.in_(target_names))
 
     total = q.count()
-    rows  = q.order_by(ProcessRecord.ml_score.desc(), ProcessRecord.timestamp.desc()) \
+    rows  = q.order_by(ProcessRecord.ml_score.asc(), ProcessRecord.timestamp.desc()) \
              .offset((page - 1) * limit).limit(limit).all()
 
     items = []
