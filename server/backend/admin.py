@@ -264,10 +264,9 @@ def list_processes(
     all_labels     = {pl.process_name: pl for pl in db.query(ProcessLabel).all() if pl.process_name}
     exported_names = {name for name, pl in all_labels.items() if pl.exported}
 
-    # Latest record per unique process name with ML score ≥ 80%
+    # Latest record per unique process name
     latest_id_subq = (
         db.query(func.max(ProcessRecord.id))
-          .filter(ProcessRecord.ml_score >= 0.80)
           .group_by(ProcessRecord.name)
           .scalar_subquery()
     )
@@ -903,7 +902,7 @@ _HTML = r"""<!DOCTYPE html>
   <!-- ── Process Labeling tab ── -->
   <div id="tab-labeling" class="page">
     <div class="page-title">Process Labeling
-      <span style="font-size:12px;font-weight:400;color:var(--text-muted);margin-left:10px">Alerts from clients (ML ≥ 80%) · label to build training dataset</span>
+      <span style="font-size:12px;font-weight:400;color:var(--text-muted);margin-left:10px">All processes from clients · label to build training dataset</span>
     </div>
 
     <!-- Benign stripe -->
