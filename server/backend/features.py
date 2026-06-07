@@ -148,7 +148,7 @@ def extract(proc: ProcessData) -> list[float]:
         float(name in DEV_TOOLS),
         float(name in KNOWN_BROWSERS),
         float(len(cmd) > 500),
-        min(len(cmd), 2000) / 2000.0,
+        min(math.log1p(len(cmd)) / math.log1p(2000), 1.0),
         suspicious_flag_count,
         float(any(p in COMMON_DEV_PORTS for p in proc.destination_ports)),
         has_discovery_cmd,

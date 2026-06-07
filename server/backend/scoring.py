@@ -48,7 +48,7 @@ DRIVER_PROCS = {
 }
 
 ALERT_THRESHOLD    = 25    # MEDIUM+
-ML_ALERT_THRESHOLD = 0.80  # ML score that always triggers an alert
+ML_ALERT_THRESHOLD = 0.70  # ML score that always triggers an alert
 
 RISK_LEVELS = [(120,"SEVERE"),(80,"CRITICAL"),(50,"HIGH"),(25,"MEDIUM"),(0,"LOW")]
 

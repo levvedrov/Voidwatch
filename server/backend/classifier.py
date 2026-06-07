@@ -344,7 +344,7 @@ class ProcessClassifier:
         )
 
         # Class weights via sample_weight (HistGBT doesn't support class_weight param)
-        sw = np.where(y_clf == 1, 4.0, 1.0)
+        sw = np.where(y_clf == 1, 2.0, 1.0)
 
         self.model = HistGradientBoostingClassifier(
             max_iter=300,
