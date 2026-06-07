@@ -831,6 +831,33 @@ _HTML = r"""<!DOCTYPE html>
   <!-- ── Issue License tab ── -->
   <div id="tab-licenses" class="page">
     <div class="page-title">Issue License</div>
+
+    <!-- Join Beta banner -->
+    <div class="panel-box" style="border:1px solid rgba(34,197,94,.35);background:rgba(20,49,31,.25)">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <div style="font-size:15px;font-weight:700;color:#22c55e;margin-bottom:4px">Join Beta</div>
+          <div style="font-size:12px;color:var(--text-muted)">Get instant access — enter your name or email and receive a Beta license key.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="beta-name" type="text" placeholder="Name or email" style="width:200px" />
+          <button class="btn btn-primary" style="background:#16a34a;border-color:#16a34a" onclick="joinBeta()">Join Beta →</button>
+          <span id="beta-msg" style="font-size:12px"></span>
+        </div>
+      </div>
+      <div id="beta-key-box" style="display:none;margin-top:16px">
+        <hr style="border-color:rgba(34,197,94,.2)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:700;color:#22c55e">✓ Your Beta license key</span>
+          <button class="btn btn-copy" onclick="copyBetaKey()">Copy Key</button>
+        </div>
+        <div id="beta-key-text" class="mono"
+             style="background:var(--bg);padding:12px;border-radius:6px;border:1px solid rgba(34,197,94,.3);
+                    font-size:11px;word-break:break-all;white-space:normal;overflow:visible"></div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Paste this key into the agent's <code>config.json</code> as <code>"license_key"</code>, or set <code>VOIDWATCH_LICENSE_KEY</code> env var.</div>
+      </div>
+    </div>
+
     <div class="panel-box">
       <h2>New License Key</h2>
       <div class="form-row">
@@ -1343,6 +1370,30 @@ async function issueKey() {
 }
 function copyNewKey() {
   navigator.clipboard.writeText(window._newToken||'').then(()=>alert('Key copied'))
+}
+
+async function joinBeta() {
+  const name = document.getElementById('beta-name').value.trim()
+  const msg  = document.getElementById('beta-msg')
+  if (!name) { msg.style.color='var(--danger)'; msg.textContent='Name required'; return }
+  msg.style.color='var(--text-muted)'; msg.textContent='Issuing…'
+  try {
+    const r = await api('/admin/licenses', {
+      method:'POST', body: JSON.stringify({customer: name, tier:'beta', expires:null, note:'Beta program'})
+    })
+    const d = await r.json()
+    if (!r.ok) { msg.style.color='var(--danger)'; msg.textContent=d.detail||'Error'; return }
+    msg.style.color='var(--ok)'; msg.textContent='✓ Issued'
+    window._betaToken = d.token
+    document.getElementById('beta-key-box').style.display = 'block'
+    document.getElementById('beta-key-text').textContent  = d.token
+    document.getElementById('beta-name').value = ''
+    loadLicenses(); loadStats()
+    setTimeout(() => { msg.textContent = '' }, 3000)
+  } catch { msg.style.color='var(--danger)'; msg.textContent='Request failed' }
+}
+function copyBetaKey() {
+  navigator.clipboard.writeText(window._betaToken||'').then(()=>alert('Beta key copied to clipboard'))
 }
 
 // ── Process Labeling ──────────────────────────────────────────────────
