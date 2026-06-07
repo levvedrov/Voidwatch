@@ -29,7 +29,7 @@ MODEL_PATH       = os.path.join(_MODEL_DIR, "voidwatch_model.joblib")
 SCALER_PATH      = os.path.join(_MODEL_DIR, "voidwatch_scaler.joblib")
 CALIBRATOR_PATH  = os.path.join(_MODEL_DIR, "voidwatch_calibrator.joblib")
 _VER_FILE        = os.path.join(_MODEL_DIR, "voidwatch_model_ver.txt")
-_MODEL_VER       = "v6-hgbt"
+_MODEL_VER       = "v7-hgbt"
 
 _STATS_DIR        = os.path.join(_DIR, "stats")
 os.makedirs(_STATS_DIR, exist_ok=True)
