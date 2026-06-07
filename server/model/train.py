@@ -528,99 +528,6 @@ def _load_folder(folder: Path, fixed_label: int) -> tuple[np.ndarray, np.ndarray
     return np.array(X_all), np.array(y_all, dtype=int), scen_all
 
 
-# ---------------------------------------------------------------------------
-# Synthetic elevated-benign data
-# ---------------------------------------------------------------------------
-
-def _generate_synthetic_elevated_benign(n_repeats: int = 30) -> tuple[np.ndarray, np.ndarray, list[str]]:
-    """
-    OTRF benign logs contain almost no elevated processes, so the model
-    spuriously learns is_elevated → malicious. These synthetic samples teach
-    it that signed, system32 processes running elevated are normal.
-
-    24 templates × n_repeats = 720 benign elevated training samples by default.
-    Added after balancing so they are never removed by the 3× cap.
-    """
-    templates = [
-        # Core Windows session/service host processes
-        ("lsass.exe",          "wininit.exe",  "C:\\Windows\\system32\\lsass.exe",
-         "c:\\windows\\system32\\lsass.exe", "System", True),
-        ("svchost.exe",        "services.exe", "C:\\Windows\\system32\\svchost.exe -k LocalServiceNetworkRestricted",
-         "c:\\windows\\system32\\svchost.exe", "System", True),
-        ("svchost.exe",        "services.exe", "C:\\Windows\\system32\\svchost.exe -k netsvcs -p",
-         "c:\\windows\\system32\\svchost.exe", "System", True),
-        ("winlogon.exe",       "smss.exe",     "winlogon.exe",
-         "c:\\windows\\system32\\winlogon.exe", "System", True),
-        ("services.exe",       "wininit.exe",  "C:\\Windows\\system32\\services.exe",
-         "c:\\windows\\system32\\services.exe", "System", True),
-        ("csrss.exe",          "smss.exe",     "csrss.exe ObjectDirectory=\\Windows SharedSection=1024,20480,768",
-         "c:\\windows\\system32\\csrss.exe", "System", True),
-        ("spoolsv.exe",        "services.exe", "C:\\Windows\\System32\\spoolsv.exe",
-         "c:\\windows\\system32\\spoolsv.exe", "System", True),
-        ("wininit.exe",        "smss.exe",     "wininit.exe",
-         "c:\\windows\\system32\\wininit.exe", "System", True),
-        ("smss.exe",           "system",       "\\SystemRoot\\System32\\smss.exe",
-         "c:\\windows\\system32\\smss.exe", "System", True),
-        # Windows security / AV running at System integrity
-        ("msmpeng.exe",        "services.exe", "\"C:\\Program Files\\Windows Defender\\MsMpEng.exe\"",
-         "c:\\program files\\windows defender\\msmpeng.exe", "System", True),
-        ("securityhealthservice.exe", "services.exe", "C:\\Windows\\system32\\SecurityHealthService.exe",
-         "c:\\windows\\system32\\securityhealthservice.exe", "System", True),
-        ("nissrv.exe",         "services.exe", "\"C:\\Program Files\\Windows Defender\\NisSrv.exe\"",
-         "c:\\program files\\windows defender\\nissrv.exe", "High", True),
-        # Admin / maintenance tools — legitimate elevated usage
-        ("powershell.exe",     "explorer.exe",
-         "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile Get-EventLog -LogName System -Newest 20",
-         "c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe", "High", True),
-        ("powershell.exe",     "taskeng.exe",
-         "powershell.exe -ExecutionPolicy RemoteSigned -File C:\\Scripts\\Backup.ps1",
-         "c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe", "High", True),
-        ("cmd.exe",            "explorer.exe", "cmd.exe /c ipconfig /all",
-         "c:\\windows\\system32\\cmd.exe", "High", True),
-        ("mmc.exe",            "explorer.exe", "\"C:\\Windows\\system32\\mmc.exe\" \"C:\\Windows\\system32\\compmgmt.msc\" /s",
-         "c:\\windows\\system32\\mmc.exe", "High", True),
-        ("regedit.exe",        "explorer.exe", "\"C:\\Windows\\regedit.exe\"",
-         "c:\\windows\\regedit.exe", "High", True),
-        ("taskmgr.exe",        "explorer.exe", "\"C:\\Windows\\system32\\Taskmgr.exe\" /4",
-         "c:\\windows\\system32\\taskmgr.exe", "High", True),
-        ("eventvwr.exe",       "explorer.exe", "\"C:\\Windows\\system32\\eventvwr.exe\"",
-         "c:\\windows\\system32\\eventvwr.exe", "High", True),
-        # Windows Update / servicing
-        ("trustedinstaller.exe","services.exe", "C:\\Windows\\servicing\\TrustedInstaller.exe",
-         "c:\\windows\\servicing\\trustedinstaller.exe", "System", True),
-        ("wuauclt.exe",        "svchost.exe",  "wuauclt.exe /UpdateDeploymentProvider WindowsUpdatePlugin.dll",
-         "c:\\windows\\system32\\wuauclt.exe", "High", True),
-        ("msiexec.exe",        "explorer.exe", "C:\\Windows\\system32\\msiexec.exe /i \"C:\\Program Files\\App\\setup.msi\"",
-         "c:\\windows\\system32\\msiexec.exe", "High", True),
-        # Dev tools running elevated (common for developers)
-        ("devenv.exe",         "explorer.exe", "\"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\devenv.exe\"",
-         "c:\\program files\\microsoft visual studio\\2022\\community\\common7\\ide\\devenv.exe", "High", True),
-        ("code.exe",           "explorer.exe", "\"C:\\Program Files\\Microsoft VS Code\\Code.exe\"",
-         "c:\\program files\\microsoft vs code\\code.exe", "High", True),
-    ]
-
-    X, y, scens = [], [], []
-    for rep in range(n_repeats):
-        for i, (name, parent, cmd, path, integrity, elevated) in enumerate(templates):
-            proc = ProcessData(
-                name=name, parent_name=parent, command_line=cmd, path=path,
-                pid=10000 + rep * 100 + i, parent_pid=500 + i,
-                cpu_usage=0.0, mem_usage=0.0,
-                is_signed=True, sha256="",
-                connection_count=0,
-                destination_ips=[], destination_ports=[], protocols=[],
-                integrity_level=integrity,
-                token_is_elevated=elevated,
-            )
-            X.append(extract(proc))
-            y.append(0)
-            scens.append("synthetic_elevated_benign")
-
-    X_arr = np.array(X, dtype=float)
-    y_arr = np.array(y, dtype=int)
-    print(f"[synthetic] Generated {len(y_arr)} elevated-benign samples ({len(templates)} templates × {n_repeats} repeats)")
-    return X_arr, y_arr, scens
-
 
 # ---------------------------------------------------------------------------
 # Main
@@ -677,21 +584,6 @@ def main() -> None:
 
     X = np.vstack(X_train_parts)
     y = np.concatenate(y_train_parts)
-
-    # Balance before adding synthetic data
-    mal_idx = np.where(y == 1)[0]
-    ben_idx = np.where(y == 0)[0]
-    if len(mal_idx) > 0 and len(ben_idx) > 3 * len(mal_idx):
-        rng = np.random.RandomState(42)
-        ben_idx = rng.choice(ben_idx, size=3 * len(mal_idx), replace=False)
-        keep = np.concatenate([mal_idx, ben_idx])
-        rng.shuffle(keep)
-        X, y = X[keep], y[keep]
-
-    # Add synthetic elevated-benign samples AFTER balancing (so they're never dropped)
-    X_syn, y_syn, _ = _generate_synthetic_elevated_benign()
-    X = np.vstack([X, X_syn])
-    y = np.concatenate([y, y_syn])
 
     mal_n = int(y.sum()); ben_n = len(y) - mal_n
     print(f"\nTraining set: {len(y)} samples  ({mal_n} malicious / {ben_n} benign)")
