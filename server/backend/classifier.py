@@ -437,6 +437,16 @@ class ProcessClassifier:
             X, y = X[keep], y[keep]
             print(f"[classifier] Balanced to {int(y.sum())} mal / {int((y==0).sum())} ben")
 
+        # Add synthetic elevated-benign AFTER balancing so they are never dropped by the cap
+        try:
+            from train import _generate_synthetic_elevated_benign
+            X_syn, y_syn, _ = _generate_synthetic_elevated_benign()
+            if X_syn.size:
+                X = np.vstack([X, X_syn])
+                y = np.concatenate([y, y_syn])
+        except Exception as exc:
+            print(f"[classifier] Synthetic data skipped: {exc}")
+
         mal_n = int(y.sum()); ben_n = len(y) - mal_n
         print(f"[classifier] Training: {len(y)} samples ({mal_n} mal / {ben_n} ben)")
         self.train_on(X, y, X_test, y_test, test_scens)
