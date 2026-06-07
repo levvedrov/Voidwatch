@@ -61,7 +61,7 @@ def _train_and_eval(X_train, y_train, X_test, y_test):
     X_s_clf, X_s_cal, y_clf, y_cal = train_test_split(
         X_s, y_train, test_size=0.20, random_state=0, stratify=y_train
     )
-    sw = np.where(y_clf == 1, 2.0, 1.0)
+    sw = np.where(y_clf == 1, 3.0, 1.0)
 
     model = HistGradientBoostingClassifier(
         max_iter=300,

@@ -29,7 +29,7 @@ MODEL_PATH       = os.path.join(_MODEL_DIR, "voidwatch_model.joblib")
 SCALER_PATH      = os.path.join(_MODEL_DIR, "voidwatch_scaler.joblib")
 CALIBRATOR_PATH  = os.path.join(_MODEL_DIR, "voidwatch_calibrator.joblib")
 _VER_FILE        = os.path.join(_MODEL_DIR, "voidwatch_model_ver.txt")
-_MODEL_VER       = "v5-hgbt"
+_MODEL_VER       = "v6-hgbt"
 
 _STATS_DIR        = os.path.join(_DIR, "stats")
 os.makedirs(_STATS_DIR, exist_ok=True)
@@ -274,6 +274,98 @@ def _plot_feature_importance(importances: dict[str, float]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# DB feedback loader
+# ---------------------------------------------------------------------------
+
+def _load_db_feedback() -> tuple[np.ndarray, np.ndarray]:
+    """Load analyst-labeled ProcessRecord rows from the live DB as training data."""
+    import json
+    try:
+        _backend = os.path.dirname(os.path.abspath(__file__))
+        from database import SessionLocal, ProcessRecord, ProcessLabel
+        from models import ProcessData
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(ProcessRecord, ProcessLabel.label)
+                .join(ProcessLabel, ProcessRecord.id == ProcessLabel.process_id)
+                .filter(ProcessLabel.label.in_(["malicious", "benign"]))
+                .all()
+            )
+            if not rows:
+                return np.empty((0, 0)), np.empty(0, dtype=int)
+            X, y = [], []
+            for rec, label in rows:
+                try:
+                    proc = ProcessData(
+                        name=rec.name or "",
+                        parent_name=rec.parent_name or "",
+                        command_line=rec.command_line or "",
+                        path=rec.path or "",
+                        pid=rec.pid or 0,
+                        parent_pid=rec.parent_pid or 0,
+                        cpu_usage=float(rec.cpu_usage or 0.0),
+                        mem_usage=float(rec.mem_usage or 0.0),
+                        is_signed=bool(rec.is_signed),
+                        sha256=rec.sha256 or "",
+                        connection_count=rec.connection_count or 0,
+                        destination_ips=json.loads(rec.destination_ips or "[]"),
+                        destination_ports=json.loads(rec.destination_ports or "[]"),
+                        protocols=json.loads(rec.protocols or "[]"),
+                    )
+                    X.append(extract(proc))
+                    y.append(1 if label == "malicious" else 0)
+                except Exception:
+                    continue
+            print(f"[classifier] DB feedback: {sum(v==1 for v in y)} mal / {sum(v==0 for v in y)} ben labeled records")
+            return np.array(X, dtype=float), np.array(y, dtype=int)
+        finally:
+            db.close()
+    except Exception as exc:
+        print(f"[classifier] DB feedback skipped: {exc}")
+        return np.empty((0, 0)), np.empty(0, dtype=int)
+
+
+def _cv_report(X: np.ndarray, y: np.ndarray, groups: list[str]) -> None:
+    """Print 3-fold GroupKFold cross-validated AUC-ROC and F1 for quick stability check."""
+    from sklearn.model_selection import GroupKFold
+    from sklearn.isotonic import IsotonicRegression
+    from sklearn.model_selection import train_test_split as _tts
+
+    if len(set(groups)) < 3 or len(np.unique(y)) < 2:
+        return
+
+    gkf = GroupKFold(n_splits=3)
+    rocs, f1s = [], []
+    for tr_idx, te_idx in gkf.split(X, y, groups=groups):
+        X_tr, X_te = X[tr_idx], X[te_idx]
+        y_tr, y_te = y[tr_idx], y[te_idx]
+        if len(np.unique(y_tr)) < 2 or len(np.unique(y_te)) < 2:
+            continue
+        scaler = StandardScaler()
+        X_s = scaler.fit_transform(X_tr)
+        X_s_clf, X_s_cal, y_clf, y_cal = _tts(X_s, y_tr, test_size=0.2, random_state=42, stratify=y_tr)
+        sw = np.where(y_clf == 1, 3.0, 1.0)
+        m = HistGradientBoostingClassifier(
+            max_iter=200, max_depth=6, learning_rate=0.05,
+            min_samples_leaf=10, random_state=42,
+        )
+        m.fit(X_s_clf, y_clf, sample_weight=sw)
+        raw_cal = m.predict_proba(X_s_cal)[:, 1]
+        cal = IsotonicRegression(out_of_bounds="clip")
+        cal.fit(raw_cal, y_cal)
+        prob = cal.predict(m.predict_proba(scaler.transform(X_te))[:, 1])
+        pred = (prob >= 0.5).astype(int)
+        from sklearn.metrics import roc_auc_score as _roc, f1_score as _f1
+        rocs.append(_roc(y_te, prob))
+        f1s.append(_f1(y_te, pred, zero_division=0))
+
+    if rocs:
+        print(f"[classifier] 3-fold CV — AUC-ROC: {np.mean(rocs):.4f} ± {np.std(rocs):.4f}  "
+              f"F1: {np.mean(f1s):.4f} ± {np.std(f1s):.4f}")
+
+
+# ---------------------------------------------------------------------------
 # Classifier class
 # ---------------------------------------------------------------------------
 
@@ -292,6 +384,13 @@ class ProcessClassifier:
 
         print("[classifier] Loading OTRF benign datasets …")
         X_ben_otrf, y_ben_otrf, scen_ben = _load_folder(BENIGN_DIR, fixed_label=0)
+
+        # 3-fold CV stability report before committing to a single split
+        if X_atk.size and X_ben_otrf.size:
+            X_all = np.vstack([X_atk, X_ben_otrf])
+            y_all = np.concatenate([y_atk, y_ben_otrf])
+            g_all = list(scen_atk) + list(scen_ben)
+            _cv_report(X_all, y_all, g_all)
 
         X_test_parts: list[np.ndarray] = []
         y_test_parts: list[np.ndarray] = []
@@ -315,11 +414,29 @@ class ProcessClassifier:
         if X_ben_otrf.size:
             _scenario_split(X_ben_otrf, y_ben_otrf, scen_ben, label_prefix="ben_")
 
+        # Append analyst-labeled DB records (boosted weight via repetition handled by class weight)
+        X_fb, y_fb = _load_db_feedback()
+        if X_fb.size:
+            X_train_parts.append(X_fb)
+            y_train_parts.append(y_fb)
+
         X_test = np.vstack(X_test_parts)     if X_test_parts else None
         y_test = np.concatenate(y_test_parts) if y_test_parts else None
 
         X = np.vstack(X_train_parts)
         y = np.concatenate(y_train_parts)
+
+        # Balance: cap benign at 3× malicious to avoid overwhelming minority class
+        mal_idx = np.where(y == 1)[0]
+        ben_idx = np.where(y == 0)[0]
+        if len(mal_idx) > 0 and len(ben_idx) > 3 * len(mal_idx):
+            rng = np.random.RandomState(42)
+            ben_idx = rng.choice(ben_idx, size=3 * len(mal_idx), replace=False)
+            keep = np.concatenate([mal_idx, ben_idx])
+            rng.shuffle(keep)
+            X, y = X[keep], y[keep]
+            print(f"[classifier] Balanced to {int(y.sum())} mal / {int((y==0).sum())} ben")
+
         mal_n = int(y.sum()); ben_n = len(y) - mal_n
         print(f"[classifier] Training: {len(y)} samples ({mal_n} mal / {ben_n} ben)")
         self.train_on(X, y, X_test, y_test, test_scens)
@@ -344,7 +461,7 @@ class ProcessClassifier:
         )
 
         # Class weights via sample_weight (HistGBT doesn't support class_weight param)
-        sw = np.where(y_clf == 1, 2.0, 1.0)
+        sw = np.where(y_clf == 1, 3.0, 1.0)
 
         self.model = HistGradientBoostingClassifier(
             max_iter=300,

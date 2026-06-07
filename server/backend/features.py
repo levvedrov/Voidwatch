@@ -15,6 +15,18 @@ TEMP_PATHS      = ["\\temp\\","\\tmp\\"]
 SUSPICIOUS_PORTS  = {4444,1337,8888,9001,31337,6666,5555,2222}
 COMMON_DEV_PORTS  = {80,443,8080,3000,5000,8000,5432,27017,6379,3306,1433,8888,8443,4200,4000,9229,35729}
 
+_SUSP_KEYWORDS = [
+    "-enc", "-encodedcommand", "frombase64string",
+    "iex", "invoke-expression", "downloadstring", "downloadfile",
+    "invoke-webrequest", "wget ", "curl ",
+    "-executionpolicy bypass", "-ep bypass", "-windowstyle hidden", "-w hidden",
+    "reg add", "currentversion\\run", "schtasks", "new-scheduledtask",
+    "lsass", "ntdsutil", "vssadmin", "reg save", "mimikatz", "sekurlsa",
+    "whoami", "net user", "net localgroup", "nltest", "systeminfo",
+    "psexec", "wmic /node", "invoke-wmimethod", "invoke-command",
+    "procdump", "comsvcs", "minidump",
+]
+
 DEV_TOOLS = {
     "python.exe","python3.exe","node.exe","electron.exe","code.exe",
     "git.exe","git-remote-https.exe","devenv.exe","rider64.exe",
@@ -49,7 +61,7 @@ FEATURE_NAMES = [
     "is_known_dev_tool",
     "is_known_browser",
     "cmd_is_long",
-    "cmd_length_norm",
+    "suspicious_keyword_count",
     "suspicious_flag_count",
     "uses_common_dev_port",
     "has_discovery_cmd",
@@ -148,7 +160,7 @@ def extract(proc: ProcessData) -> list[float]:
         float(name in DEV_TOOLS),
         float(name in KNOWN_BROWSERS),
         float(len(cmd) > 500),
-        min(math.log1p(len(cmd)) / math.log1p(2000), 1.0),
+        min(sum(1 for kw in _SUSP_KEYWORDS if kw in cmd) / 4.0, 1.0),
         suspicious_flag_count,
         float(any(p in COMMON_DEV_PORTS for p in proc.destination_ports)),
         has_discovery_cmd,
